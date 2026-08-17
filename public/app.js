@@ -23,6 +23,7 @@ const state = {
   rateLimits: null,
   report: [],
   reportFetched: 0,
+  turnToggles: {}, // turn key -> expanded override (survives live re-renders)
 };
 
 const $ = (id) => document.getElementById(id);
@@ -131,14 +132,29 @@ function renderDetail() {
   turnsBox.replaceChildren();
   const turns = [...(s.turns || [])].reverse();
   const maxTok = Math.max(200, ...turns.flatMap((t) => t.actions.map((a) => a.tokens)));
-  for (const t of turns) {
-    const turn = el('div', 'turn');
+  turns.forEach((t, i) => {
+    const key = `${s.id}|${t.ts}|${(t.prompt || '').slice(0, 40)}`;
+    const expanded = state.turnToggles[key] ?? (i === 0); // newest open by default
+    const turn = el('div', 'turn' + (expanded ? '' : ' collapsed'));
     const head = el('div', 'turn-head');
+    head.tabIndex = 0;
+    head.setAttribute('role', 'button');
+    head.setAttribute('aria-expanded', String(expanded));
     head.append(
+      el('span', 'chev', expanded ? '▾' : '▸'),
       el('span', 'tp', '> ' + (t.prompt || '')),
-      el('span', 'tt', `+${fmtTok(t.fresh)} in · ${fmtTok(t.output)} out`),
+      el('span', 'tt', `${t.actions.length} actions · +${fmtTok(t.fresh)} in · ${fmtTok(t.output)} out`),
     );
+    const toggle = () => {
+      state.turnToggles[key] = !expanded;
+      renderDetail();
+    };
+    head.onclick = toggle;
+    head.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    };
     turn.append(head);
+    const actionsBox = el('div', 'turn-actions');
     for (const a of t.actions) {
       const row = el('div', 'arow');
       const label = el('span', 'al');
@@ -152,10 +168,11 @@ function renderDetail() {
       fill.style.background = catColor(a.cat);
       bar.append(fill);
       row.append(label, bar, el('span', 'anum', '+' + fmtTok(a.tokens)));
-      turn.append(row);
+      actionsBox.append(row);
     }
+    turn.append(actionsBox);
     turnsBox.append(turn);
-  }
+  });
 
   // docs leaderboard
   const docsBox = $('doc-rows');

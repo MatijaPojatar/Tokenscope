@@ -128,11 +128,17 @@ h2 {
 /* ---- timeline ---- */
 .turn { margin-bottom: 1.3rem; }
 .turn-head {
-  display: flex; justify-content: space-between; gap: 1rem; align-items: baseline;
+  display: flex; gap: 0.6rem; align-items: baseline;
   font-size: 0.82rem; font-weight: 600; padding: 0.3rem 0;
   border-bottom: 1px solid var(--line); margin-bottom: 0.35rem;
+  cursor: pointer; user-select: none;
 }
-.turn-head .tp { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turn-head:hover .tp { color: var(--accent); }
+.turn-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.turn-head .chev { color: var(--muted); font-size: 0.7rem; flex: 0 0 auto; }
+.turn-head .tp { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.turn.collapsed .turn-actions { display: none; }
+.turn.collapsed { margin-bottom: 0.5rem; }
 .turn-head .tt { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); font-weight: 400; white-space: nowrap; }
 .arow {
   display: grid; grid-template-columns: minmax(0, 1fr) 7rem 3.6rem;
