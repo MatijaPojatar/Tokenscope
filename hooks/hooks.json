@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/ensure.js"],
+            "async": true,
+            "statusMessage": "Starting Tokenscope collector..."
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl",
+            "args": ["-s", "-m", "2", "--connect-timeout", "1", "-X", "POST", "http://localhost:4820/event", "-H", "Content-Type: application/json", "-d", "@-"],
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl",
+            "args": ["-s", "-m", "2", "--connect-timeout", "1", "-X", "POST", "http://localhost:4820/event", "-H", "Content-Type: application/json", "-d", "@-"],
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl",
+            "args": ["-s", "-m", "2", "--connect-timeout", "1", "-X", "POST", "http://localhost:4820/event", "-H", "Content-Type: application/json", "-d", "@-"],
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

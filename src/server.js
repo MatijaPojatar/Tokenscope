@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // Tokenscope collector: serves the visualizer UI, streams session updates
 // over SSE, ingests optional hook events, and tails Claude Code transcripts.
 //

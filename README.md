@@ -42,6 +42,43 @@ It runs as a local web page next to your terminal and shows, for every session:
 
 Zero dependencies. Node 18+.
 
+## Install
+
+**As a Claude Code plugin** (no clone needed) — the repo is its own
+marketplace:
+
+```
+/plugin marketplace add MatijaPojatar/Tokenscope
+/plugin install tokenscope@tokenscope
+```
+
+Run `/reload-plugins` if the install summary asks for it. The plugin ships
+a `SessionStart` hook that boots the collector automatically (detached,
+first session of the day starts it), real-time event hooks, and a
+`/tokenscope:dashboard` skill that starts it on demand and hands you the
+URL. Nothing else to configure.
+
+To pre-enable it for a whole team, add to that repo's
+`.claude/settings.json`:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "tokenscope": { "source": { "source": "github", "repo": "MatijaPojatar/Tokenscope" } }
+  },
+  "enabledPlugins": { "tokenscope@tokenscope": true }
+}
+```
+
+**From a clone** — auto-start by adding a `SessionStart` hook to
+`settings.json`:
+
+```json
+{ "type": "command", "async": true, "command": "node <path-to-tokenscope>/scripts/ensure.js" }
+```
+
+or run it manually:
+
 ## Run
 
 ```

@@ -4,6 +4,9 @@
   "description": "Live context and token-usage visualizer for Claude Code sessions",
   "type": "module",
   "main": "src/server.js",
+  "bin": {
+    "tokenscope": "src/server.js"
+  },
   "scripts": {
     "start": "node src/server.js"
   },

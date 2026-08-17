@@ -1,0 +1,11 @@
+{
+  "name": "tokenscope",
+  "owner": { "name": "MatijaPojatar" },
+  "plugins": [
+    {
+      "name": "tokenscope",
+      "source": "./",
+      "description": "Live context and token-usage dashboard for Claude Code sessions"
+    }
+  ]
+}
