@@ -1,0 +1,17 @@
+{
+  "//": "Optional: merge into %USERPROFILE%\\.claude\\settings.json for real-time hook events. Tokenscope works without this — hooks only reduce latency. curl ships with Windows 10/11.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "async": true, "command": "curl -s -m 2 --connect-timeout 1 -X POST http://localhost:4820/event -H \"Content-Type: application/json\" -d @-" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "async": true, "command": "curl -s -m 2 --connect-timeout 1 -X POST http://localhost:4820/event -H \"Content-Type: application/json\" -d @-" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "async": true, "command": "curl -s -m 2 --connect-timeout 1 -X POST http://localhost:4820/event -H \"Content-Type: application/json\" -d @-" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "async": true, "command": "curl -s -m 2 --connect-timeout 1 -X POST http://localhost:4820/event -H \"Content-Type: application/json\" -d @-" }] }
+    ]
+  }
+}

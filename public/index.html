@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tokenscope</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2312181F'/%3E%3Crect x='3' y='9' width='2.4' height='4' fill='%234CBCAA'/%3E%3Crect x='6.8' y='6' width='2.4' height='7' fill='%239C8CE8'/%3E%3Crect x='10.6' y='3' width='2.4' height='10' fill='%23EFAF45'/%3E%3C/svg%3E">
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="brand">tokenscope</div>
+      <div id="session-list"></div>
+    </aside>
+    <main id="main">
+      <div id="empty" class="empty">waiting for sessions…</div>
+      <div id="detail" hidden>
+        <header id="head">
+          <div class="head-row">
+            <h1 id="s-title"></h1>
+            <span id="live-dot" class="dot"></span>
+          </div>
+          <div class="head-meta">
+            <span id="s-cwd" class="mono"></span>
+            <span id="s-model" class="mono"></span>
+            <span id="s-hook" class="mono hook"></span>
+          </div>
+          <div class="gauge-wrap">
+            <div class="gauge-label">
+              <span>CONTEXT WINDOW</span>
+              <span id="g-num" class="mono"></span>
+            </div>
+            <div id="gauge" class="gauge"></div>
+            <div id="legend" class="legend"></div>
+          </div>
+        </header>
+        <div id="cols">
+          <section id="timeline">
+            <h2>Per-action cost</h2>
+            <div id="turns"></div>
+          </section>
+          <section id="docs">
+            <h2>Docs leaderboard</h2>
+            <div id="doc-rows"></div>
+            <h2 style="margin-top:1.6rem">Session totals</h2>
+            <div id="totals" class="totals"></div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
