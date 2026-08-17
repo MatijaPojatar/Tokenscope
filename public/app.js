@@ -21,7 +21,7 @@ const state = {
   pinned: false,   // user clicked a session; stop auto-following
   view: 'session', // 'session' | 'docs' (cross-session report)
   rateLimits: null,
-  report: [],
+  report: { read: [], unused: [] },
   reportFetched: 0,
   turnToggles: {}, // turn key -> expanded override (survives live re-renders)
   agentToggles: {}, // agent key -> expanded
@@ -290,6 +290,31 @@ function renderDetail() {
     turnsBox.append(turn);
   });
 
+  // Observable usage signals for an always-loaded file. In-context use
+  // isn't logged anywhere, so we report what is: explicit Reads/Edits of
+  // the same file, and how many sessions paid to load it.
+  const fileUsage = (f) => {
+    const norm = String(f.path).replace(/\//g, '\\').toLowerCase();
+    let reads = 0;
+    let edits = 0;
+    const scan = (acts) => {
+      for (const a of acts) {
+        const sp = a.label.indexOf(' ');
+        if (sp < 0) continue;
+        const verb = a.label.slice(0, sp);
+        const rest = a.label.slice(sp + 1).replace(/\//g, '\\').toLowerCase();
+        if (!rest || !norm.endsWith(rest)) continue;
+        if (verb === 'Read' || verb === 'auto') reads += 1;
+        else if (verb === 'Edit' || verb === 'Write') edits += 1;
+      }
+    };
+    for (const t of s.turns || []) scan(t.actions);
+    for (const ag of s.agents || []) scan(ag.actions || []);
+    return { reads, edits };
+  };
+  const projSessionCount = Math.max(1, state.sessions.filter(
+    (x) => x.cwd && s.cwd && x.cwd.toLowerCase() === s.cwd.toLowerCase()).length);
+
   // base context breakdown: disk-scanned files + measured injections +
   // the unitemizable remainder (system prompt, tool schemas)
   const baseWrap = $('base-wrap');
@@ -327,31 +352,6 @@ function renderDetail() {
       baseRows.append(h);
     };
     addGroupHead('loaded at session start', fmtTok(baseTotal));
-
-    // Observable usage signals for an always-loaded file. In-context use
-    // isn't logged anywhere, so we report what is: explicit Reads/Edits of
-    // the same file, and how many sessions paid to load it.
-    const fileUsage = (f) => {
-      const norm = String(f.path).replace(/\//g, '\\').toLowerCase();
-      let reads = 0;
-      let edits = 0;
-      const scan = (acts) => {
-        for (const a of acts) {
-          const sp = a.label.indexOf(' ');
-          if (sp < 0) continue;
-          const verb = a.label.slice(0, sp);
-          const rest = a.label.slice(sp + 1).replace(/\//g, '\\').toLowerCase();
-          if (!rest || !norm.endsWith(rest)) continue;
-          if (verb === 'Read' || verb === 'auto') reads += 1;
-          else if (verb === 'Edit' || verb === 'Write') edits += 1;
-        }
-      };
-      for (const t of s.turns || []) scan(t.actions);
-      for (const ag of s.agents || []) scan(ag.actions || []);
-      return { reads, edits };
-    };
-    const projSessionCount = Math.max(1, state.sessions.filter(
-      (x) => x.cwd && s.cwd && x.cwd.toLowerCase() === s.cwd.toLowerCase()).length);
 
     let diskSum = 0;
     for (const f of s.baseFiles || []) {
@@ -569,6 +569,24 @@ function renderDetail() {
     docsBox.append(item);
   }
 
+  // base-loaded docs with no observed use this session
+  const unusedBase = (s.baseFiles || [])
+    .filter((f) => /\.(md|mdx)$/i.test(f.path))
+    .map((f) => ({ f, u: fileUsage(f) }))
+    .filter((x) => x.u.reads + x.u.edits === 0);
+  if (unusedBase.length > 0) {
+    docsBox.append(el('div', 'doc-unused-head', 'loaded · no observed use this session'));
+    for (const { f } of unusedBase) {
+      const row = el('div', 'doc-row unusedrow');
+      row.append(
+        el('span', 'dp', relPath(f.path, s.cwd)),
+        el('span', 'ds', `~${fmtTok(Math.max(1, Math.round(f.chars / 3.8)))} loaded`),
+      );
+      row.title = f.path + " — in-context use isn't logged; no Reads or edits this session";
+      docsBox.append(row);
+    }
+  }
+
   // agents — each runs in its own context window
   const agentsWrap = $('agents-wrap');
   const agentRows = $('agent-rows');
@@ -650,10 +668,12 @@ function renderDetail() {
 function renderReport() {
   const box = $('report-rows');
   box.replaceChildren();
-  if (state.report.length === 0) {
+  const read = state.report.read || [];
+  const unused = state.report.unused || [];
+  if (read.length === 0 && unused.length === 0) {
     box.append(el('div', 'ds', 'no docs read in the loaded window'));
   }
-  for (const d of state.report) {
+  for (const d of read) {
     const row = el('div', 'doc-row report-row');
     const parts = d.path.replace(/\//g, '\\').split('\\');
     const name = el('span', 'dp', parts.slice(-4).join('\\'));
@@ -664,6 +684,19 @@ function renderReport() {
     );
     row.title = d.path;
     box.append(row);
+  }
+  if (unused.length > 0) {
+    box.append(el('div', 'doc-unused-head', 'loaded every session · never read or edited'));
+    for (const f of unused) {
+      const row = el('div', 'doc-row report-row unusedrow');
+      const parts = f.path.replace(/\//g, '\\').split('\\');
+      row.append(
+        el('span', 'dp', parts.slice(-4).join('\\')),
+        el('span', 'ds', `${f.sessions} session${f.sessions === 1 ? '' : 's'} · ~${fmtTok(Math.round(f.chars / 3.8))} each`),
+      );
+      row.title = f.path + " — in-context use isn't logged; no Reads or edits were observed anywhere";
+      box.append(row);
+    }
   }
 }
 

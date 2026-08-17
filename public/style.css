@@ -255,6 +255,13 @@ h2 {
 .du-time { color: var(--muted); font-size: 0.62rem; white-space: nowrap; }
 .du-ctx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
 .du-note { font-family: var(--mono); font-size: 0.62rem; color: var(--muted); padding: 0.15rem 0; }
+.doc-unused-head {
+  font-family: var(--mono); font-size: 0.62rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--c-recache);
+  padding: 0.7rem 0 0.2rem; border-bottom: 1px solid var(--line);
+}
+.unusedrow .dp { color: var(--muted); }
 
 /* ---- expandable agents ---- */
 .agent-head { cursor: pointer; user-select: none; }

@@ -26,9 +26,12 @@ function displayPath(p, cwd) {
   return norm;
 }
 
-// Harness-internal files (transcript spill files, scratchpads) read back by
-// Claude are not the user's documentation — keep them out of docs stats.
-const HARNESS_PATH = /[\\/](\.claude|tool-results)[\\/]|[\\/]Temp[\\/]claude[\\/]/i;
+// Harness-internal files (transcript spill files, scratchpads, memory
+// internals) read back by Claude are not the user's documentation — keep
+// them out of docs stats. Project-level .claude\*.md ARE user docs and must
+// stay eligible, so only the harness's own trees are excluded:
+// ~\.claude\projects\ (transcripts, tool-results, memory) and Temp\claude.
+const HARNESS_PATH = /[\\/]\.claude[\\/]projects[\\/]|[\\/]tool-results[\\/]|[\\/]Temp[\\/]claude[\\/]/i;
 const isDocPath = (fp) => /\.(md|mdx|rst)$/i.test(fp) && !HARNESS_PATH.test(fp);
 
 function classifyTool(name, input) {
@@ -79,6 +82,7 @@ export class SessionModel {
     };
     this.totals = { calls: 0, fresh: 0, output: 0 };
     this.sidechain = { calls: 0, tokens: 0 };
+    this.editedFiles = new Set(); // normalized paths touched by Edit/Write
     this.toolUses = new Map(); // toolUseId -> {name, input}
     this.pending = []; // [{cat, chars, action?, docPath?}]
     this.seenApi = new Set();
@@ -132,6 +136,9 @@ export class SessionModel {
           const name = tu ? tu.name : 'tool';
           const input = tu ? tu.input : null;
           const cat = tu ? classifyTool(name, input) : 'toolOther';
+          if ((name === 'Edit' || name === 'Write' || name === 'NotebookEdit') && input && input.file_path) {
+            this.editedFiles.add(String(input.file_path).replace(/\//g, '\\').toLowerCase());
+          }
           // Execution time: result timestamp minus the issuing tool_use's.
           const durMs = tu && tu.ts && evt.timestamp
             ? Math.max(0, new Date(evt.timestamp) - new Date(tu.ts))

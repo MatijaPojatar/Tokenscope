@@ -68,7 +68,33 @@ export class Store {
         map.set(d.path, cur);
       }
     }
-    return [...map.values()].sort((a, b) => b.tokens - a.tokens).slice(0, 200);
+    const read = [...map.values()].sort((a, b) => b.tokens - a.tokens).slice(0, 200);
+
+    // Base-loaded docs with no observed use anywhere: never Read (by any
+    // session or agent) and never edited. In-context use isn't logged, so
+    // this is the strongest observable dead-weight signal, not proof.
+    const norm = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+    const readKeys = new Set([...map.keys()].map(norm));
+    const editedKeys = new Set();
+    for (const s of this.sessions.values()) {
+      for (const p of s.editedFiles) editedKeys.add(p);
+      for (const a of s.agents.values()) for (const p of a.editedFiles) editedKeys.add(p);
+    }
+    const loaded = new Map();
+    for (const s of this.sessions.values()) {
+      for (const f of s.baseFiles || []) {
+        if (!/\.(md|mdx)$/i.test(f.path)) continue;
+        const k = norm(f.path);
+        const cur = loaded.get(k) || { path: f.path, label: f.label, chars: f.chars, sessions: 0 };
+        cur.sessions += 1;
+        loaded.set(k, cur);
+      }
+    }
+    const unused = [...loaded.entries()]
+      .filter(([k]) => !readKeys.has(k) && !editedKeys.has(k))
+      .map(([, v]) => v)
+      .sort((a, b) => b.chars - a.chars);
+    return { read, unused };
   }
 
   sessionList() {
