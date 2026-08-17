@@ -43,6 +43,15 @@ function fmtAgo(ts) {
   return Math.round(s / 86400) + 'd';
 }
 
+function relPath(p, cwd) {
+  const norm = String(p || '').replace(/\//g, '\\');
+  if (cwd) {
+    const prefix = String(cwd).replace(/\//g, '\\').replace(/\\+$/, '') + '\\';
+    if (norm.toLowerCase().startsWith(prefix.toLowerCase())) return norm.slice(prefix.length);
+  }
+  return norm;
+}
+
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -136,6 +145,7 @@ function renderDetail() {
       const [tool, ...rest] = (a.label || a.name).split(' ');
       label.append(document.createTextNode(tool + ' '));
       label.append(el('em', null, rest.join(' ')));
+      label.title = a.label || a.name;
       const bar = el('span', 'abar');
       const fill = document.createElement('div');
       fill.style.width = Math.max(1.5, (a.tokens / maxTok) * 100) + '%';
@@ -155,8 +165,7 @@ function renderDetail() {
   }
   for (const d of s.docs || []) {
     const row = el('div', 'doc-row');
-    const parts = d.path.replace(/\//g, '\\').split('\\');
-    const name = el('span', 'dp', parts.slice(-3).join('\\'));
+    const name = el('span', 'dp', relPath(d.path, s.cwd));
     if (d.agent) name.append(el('i', 'abadge', 'A'));
     row.append(name, el('span', 'ds', `${d.reads}× · ${fmtTok(d.tokens)}`));
     row.title = d.path + (d.agent ? ' (read by a subagent)' : '');

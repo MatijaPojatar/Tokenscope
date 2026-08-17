@@ -14,10 +14,16 @@ const DEFAULT_WINDOW = 200000;
 
 const est = (chars) => Math.max(1, Math.round(chars / CHARS_PER_TOKEN));
 
-function shortPath(p) {
+// Full path, made relative to the session cwd when it's inside the project —
+// complete information without the repetitive prefix.
+function displayPath(p, cwd) {
   if (!p) return '';
-  const parts = String(p).replace(/\//g, '\\').split('\\').filter(Boolean);
-  return parts.slice(-3).join('\\');
+  const norm = String(p).replace(/\//g, '\\');
+  if (cwd) {
+    const prefix = String(cwd).replace(/\//g, '\\').replace(/\\+$/, '') + '\\';
+    if (norm.toLowerCase().startsWith(prefix.toLowerCase())) return norm.slice(prefix.length);
+  }
+  return norm;
 }
 
 // Harness-internal files (transcript spill files, scratchpads) read back by
@@ -35,9 +41,9 @@ function classifyTool(name, input) {
   return 'toolOther';
 }
 
-function toolLabel(name, input) {
+function toolLabel(name, input, cwd) {
   if (!input) return name;
-  if (input.file_path) return `${name} ${shortPath(input.file_path)}`;
+  if (input.file_path) return `${name} ${displayPath(input.file_path, cwd)}`;
   if (input.pattern) return `${name} "${String(input.pattern).slice(0, 40)}"`;
   if (input.command) return `${name} ${String(input.command).slice(0, 50)}`;
   if (input.description) return `${name} ${String(input.description).slice(0, 50)}`;
@@ -118,7 +124,7 @@ export class SessionModel {
           const cat = tu ? classifyTool(name, input) : 'toolOther';
           const action = {
             name, cat,
-            label: toolLabel(name, input),
+            label: toolLabel(name, input, this.cwd),
             chars: r.chars,
             tokens: 0,
             ts: evt.timestamp,
@@ -145,7 +151,7 @@ export class SessionModel {
           const turn = this.currentTurn();
           const action = {
             name: 'CLAUDE.md', cat: 'docsRead',
-            label: `auto ${shortPath(evt.path)}`,
+            label: `auto ${displayPath(evt.path, this.cwd)}`,
             chars: evt.chars, tokens: 0, ts: evt.timestamp,
           };
           turn.actions.push(action);
