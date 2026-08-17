@@ -325,8 +325,16 @@ export class SessionModel {
         model: a.model,
         calls: a.totals.calls,
         tokens: a.totals.fresh + a.totals.output,
+        fresh: a.totals.fresh,
+        output: a.totals.output,
         contextNow: a.contextNow,
         docsReads: [...a.docs.values()].reduce((n, d) => n + d.reads, 0),
+        started: a.turns.length ? a.turns[0].ts : null,
+        ended: a.lastActivity,
+        actions: a.turns
+          .flatMap((t) => t.actions)
+          .slice(-200)
+          .map((x) => ({ label: x.label, cat: x.cat, tokens: x.tokens })),
       })),
     };
   }

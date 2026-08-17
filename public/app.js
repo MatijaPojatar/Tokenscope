@@ -24,6 +24,7 @@ const state = {
   report: [],
   reportFetched: 0,
   turnToggles: {}, // turn key -> expanded override (survives live re-renders)
+  agentToggles: {}, // agent key -> expanded
 };
 
 const $ = (id) => document.getElementById(id);
@@ -33,6 +34,13 @@ function fmtTok(n) {
   if (n == null) return '–';
   if (n >= 1000) return (n / 1000).toFixed(n >= 100000 ? 0 : 1) + 'k';
   return String(n);
+}
+
+function fmtDur(startTs, endTs) {
+  if (!startTs || !endTs) return '';
+  const s = Math.max(0, (new Date(endTs) - new Date(startTs)) / 1000);
+  if (s < 60) return Math.round(s) + 's';
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
 }
 
 function fmtAgo(ts) {
@@ -196,13 +204,47 @@ function renderDetail() {
   const agents = s.agents || [];
   agentsWrap.hidden = agents.length === 0;
   for (const a of [...agents].sort((x, y) => y.tokens - x.tokens)) {
-    const row = el('div', 'doc-row');
-    row.append(
-      el('span', 'dp', a.title || a.id),
-      el('span', 'ds', `${fmtTok(a.tokens)} · ${a.calls} calls · ${a.docsReads} docs`),
+    const key = `${s.id}|${a.id}`;
+    const expanded = !!state.agentToggles[key];
+    const item = el('div', 'agent-item');
+    const head = el('div', 'doc-row agent-head');
+    head.tabIndex = 0;
+    head.setAttribute('role', 'button');
+    head.setAttribute('aria-expanded', String(expanded));
+    head.append(
+      el('span', 'dp', (expanded ? '▾ ' : '▸ ') + (a.title || a.id)),
+      el('span', 'ds', `${fmtTok(a.tokens)} · ${a.calls} calls`),
     );
-    row.title = `${a.id} · ${a.model || ''} · context ${fmtTok(a.contextNow)}`;
-    agentRows.append(row);
+    head.title = a.title || a.id;
+    const toggle = () => { state.agentToggles[key] = !expanded; renderDetail(); };
+    head.onclick = toggle;
+    head.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    };
+    item.append(head);
+    if (expanded) {
+      const metaBits = [
+        a.model,
+        `ctx ${fmtTok(a.contextNow)}`,
+        `+${fmtTok(a.fresh)} in · ${fmtTok(a.output)} out`,
+        fmtDur(a.started, a.ended),
+        a.docsReads ? `${a.docsReads} docs reads` : null,
+      ].filter(Boolean);
+      item.append(el('div', 'agent-meta', metaBits.join(' · ')));
+      const list = el('div', 'agent-actions');
+      for (const x of a.actions || []) {
+        const r = el('div', 'agent-action');
+        const dot = el('i', 'adot');
+        dot.style.background = catColor(x.cat);
+        const lbl = el('span', 'aal', x.label);
+        lbl.title = x.label;
+        r.append(dot, lbl, el('span', 'anum', '+' + fmtTok(x.tokens)));
+        list.append(r);
+      }
+      if (!list.childElementCount) list.append(el('div', 'ds', 'no tool calls'));
+      item.append(list);
+    }
+    agentRows.append(item);
   }
 
   // totals

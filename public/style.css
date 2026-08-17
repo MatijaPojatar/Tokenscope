@@ -160,6 +160,29 @@ h2 {
 .doc-row .dp { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .doc-row .ds { color: var(--muted); white-space: nowrap; }
 
+/* ---- expandable agents ---- */
+.agent-head { cursor: pointer; user-select: none; }
+.agent-head:hover .dp { color: var(--accent); }
+.agent-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.agent-meta {
+  font-family: var(--mono); font-size: 0.66rem; color: var(--muted);
+  padding: 0.3rem 0 0.15rem 0.9rem;
+}
+.agent-actions {
+  margin: 0.2rem 0 0.6rem 0.3rem;
+  padding: 0.1rem 0 0.1rem 0.55rem;
+  border-left: 2px solid var(--line);
+}
+.agent-action {
+  display: grid; grid-template-columns: auto 1fr auto;
+  gap: 0.45rem; align-items: center;
+  font-family: var(--mono); font-size: 0.68rem;
+  padding: 0.13rem 0;
+}
+.adot { width: 7px; height: 7px; border-radius: 2px; flex: 0 0 auto; }
+.aal { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-action .anum { color: var(--muted); }
+
 .abadge {
   font-style: normal; font-size: 0.58rem; font-weight: 600;
   color: var(--c-agent); border: 1px solid var(--c-agent);
