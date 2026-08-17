@@ -160,6 +160,47 @@ h2 {
 .doc-row .dp { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .doc-row .ds { color: var(--muted); white-space: nowrap; }
 
+/* ---- optimize suggestions ---- */
+#sugg-wrap { margin-bottom: 1.6rem; }
+.sugg-item {
+  border-left: 2px solid var(--accent);
+  padding: 0.35rem 0 0.4rem 0.7rem;
+  margin-bottom: 0.55rem;
+}
+.sugg-head {
+  font-family: var(--mono); font-size: 0.72rem; font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.sugg-ctx {
+  font-family: var(--mono); font-size: 0.64rem; color: var(--muted);
+  margin-top: 0.15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sugg-fix { font-size: 0.72rem; color: var(--muted); margin-top: 0.2rem; }
+.sugg-item.clickable { cursor: pointer; }
+.sugg-item.clickable:hover { background: var(--panel); }
+.sugg-item.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sugg-item.active { background: var(--panel); border-left-width: 4px; }
+.sugg-more {
+  font-family: var(--mono); font-size: 0.66rem;
+  background: none; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 0.22rem 0.6rem; cursor: pointer; margin-top: 0.1rem;
+}
+.sugg-more:hover { color: var(--accent); border-color: var(--accent); }
+.sugg-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* rows matching the clicked Optimize entry */
+.arow.hl, .agent-action.hl {
+  background: rgba(239, 175, 69, 0.12);
+  outline: 1px solid var(--accent);
+  border-radius: 4px;
+}
+
+/* rows that belong to some Optimize finding — click to focus its card */
+.arow.opt, .agent-action.opt { cursor: pointer; }
+.arow.opt .anum, .agent-action.opt .anum { color: var(--accent); font-weight: 600; }
+.arow.opt:hover, .agent-action.opt:hover { background: var(--panel); border-radius: 4px; }
+
 /* ---- expandable agents ---- */
 .agent-head { cursor: pointer; user-select: none; }
 .agent-head:hover .dp { color: var(--accent); }

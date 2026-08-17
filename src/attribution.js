@@ -295,6 +295,81 @@ export class SessionModel {
     return [...map.values()].sort((x, y) => y.tokens - x.tokens);
   }
 
+  // Optimization suggestions, grounded in this session's actual token spend.
+  // Each finding: {kind, impact (tokens), count, subject, context}.
+  suggestions() {
+    const out = [];
+    const searches = new Map(); // label -> {tokens, count, context, agent}
+    const reads = new Map(); // path -> {tokens, count}
+
+    const collect = (turns, agentTitle) => {
+      for (const t of turns) {
+        for (const a of t.actions) {
+          if (a.cat === 'search') {
+            const cur = searches.get(a.label) ||
+              { tokens: 0, count: 0, context: null, maxTok: -1, agent: false };
+            cur.tokens += a.tokens;
+            cur.count += 1;
+            if (a.tokens > cur.maxTok) {
+              cur.maxTok = a.tokens;
+              cur.context = agentTitle ? `agent: ${agentTitle.slice(0, 60)}` : (t.prompt || null);
+            }
+            if (agentTitle) cur.agent = true;
+            searches.set(a.label, cur);
+          } else if (a.cat === 'codeRead' && a.name === 'Read') {
+            const p = a.label.startsWith('Read ') ? a.label.slice(5) : a.label;
+            const cur = reads.get(p) || { tokens: 0, count: 0 };
+            cur.tokens += a.tokens;
+            cur.count += 1;
+            reads.set(p, cur);
+          }
+        }
+      }
+    };
+    collect(this.turns, null);
+    for (const ag of this.agents.values()) collect(ag.turns, ag.title || ag.id);
+
+    // Per-kind caps so one noisy category can't crowd out the others.
+    const byImpact = (a, b) => b.impact - a.impact;
+
+    const searchSuggs = [];
+    for (const [label, s] of searches) {
+      if (s.tokens >= 2500 || (s.count >= 3 && s.tokens >= 1200)) {
+        searchSuggs.push({ kind: 'search', impact: s.tokens, count: s.count, subject: label, context: s.context });
+      }
+    }
+    const rereadSuggs = [];
+    for (const [p, r] of reads) {
+      if (r.count >= 3 && r.tokens >= 3000) {
+        rereadSuggs.push({ kind: 'reread', impact: r.tokens, count: r.count, subject: p, context: null });
+      }
+    }
+    const fatdocSuggs = [];
+    for (const d of this.mergedDocs()) {
+      const avg = d.tokens / Math.max(1, d.reads);
+      if (d.reads >= 2 && avg >= 3500) {
+        fatdocSuggs.push({ kind: 'fatdoc', impact: d.tokens, count: d.reads, subject: d.path, context: null });
+      }
+    }
+    // Send every finding — the UI shows a per-kind capped subset by default
+    // with a "show more" toggle for the rest.
+    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs);
+    out.sort(byImpact);
+    out.splice(40);
+    // Recache is mostly a workflow fact, not a docs fix — one entry, always last,
+    // and only when it's a meaningful share of what the session paid.
+    if (this.context.recache >= 100000 && this.context.recache >= this.totals.fresh * 0.25) {
+      out.push({
+        kind: 'recache',
+        impact: this.context.recache,
+        count: Math.round((this.context.recache / Math.max(1, this.totals.fresh)) * 100),
+        subject: null,
+        context: null,
+      });
+    }
+    return out;
+  }
+
   credit(p, tokens) {
     this.context[p.cat] = (this.context[p.cat] || 0) + tokens;
     if (p.action) p.action.tokens += tokens;
@@ -319,6 +394,7 @@ export class SessionModel {
       costUsd: this.costUsd ?? (this.exactCostUsd > 0 ? this.exactCostUsd : null),
       turns: this.turns.slice(-60),
       docs: this.mergedDocs().slice(0, 30),
+      suggestions: this.suggestions(),
       agents: [...this.agents.values()].map((a) => ({
         id: a.id,
         title: a.title,

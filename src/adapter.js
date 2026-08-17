@@ -90,7 +90,11 @@ export function parseLine(line) {
       if (results.length > 0) {
         return { kind: 'tool_results', results, timestamp: e.timestamp, isSidechain: !!e.isSidechain };
       }
-      const text = textParts.join('\n');
+      // Editor/system wrappers around the real prompt are noise in labels.
+      const text = textParts.join('\n')
+        .replace(/<ide_selection>[\s\S]*?<\/ide_selection>\s*/g, '')
+        .replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '')
+        .trim();
       if (!text) return null;
       return {
         kind: 'prompt',

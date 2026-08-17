@@ -25,7 +25,34 @@ const state = {
   reportFetched: 0,
   turnToggles: {}, // turn key -> expanded override (survives live re-renders)
   agentToggles: {}, // agent key -> expanded
+  highlight: null, // {kind, subject} from a clicked Optimize entry
+  suggExpanded: {}, // session id -> show all findings past the per-kind caps
 };
+
+// Does an action row belong to the clicked Optimize finding?
+function actionMatches(hl, a) {
+  if (!hl) return false;
+  if (hl.kind === 'search') return a.cat === 'search' && a.label === hl.subject;
+  if (hl.kind === 'reread') return a.label === 'Read ' + hl.subject;
+  if (hl.kind === 'fatdoc') {
+    if (a.cat !== 'docsRead') return false;
+    const lp = a.label.replace(/^(Read|auto) /, '').replace(/\//g, '\\').toLowerCase();
+    return lp.length > 0 && String(hl.subject).replace(/\//g, '\\').toLowerCase().endsWith(lp);
+  }
+  return false;
+}
+
+const turnKey = (sid, t) => `${sid}|${t.ts}|${(t.prompt || '').slice(0, 40)}`;
+
+// Default per-kind display caps for the Optimize panel.
+const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, recache: 99 };
+function cappedSuggs(all) {
+  const seen = {};
+  return all.filter((g) => {
+    seen[g.kind] = (seen[g.kind] || 0) + 1;
+    return seen[g.kind] <= (SUGG_CAPS[g.kind] ?? 3);
+  });
+}
 
 const $ = (id) => document.getElementById(id);
 const catColor = (cat) => `var(--c-${cat})`;
@@ -135,13 +162,30 @@ function renderDetail() {
     legend.append(li);
   }
 
+  // Optimize findings indexed for cross-linking: calls belonging to a finding
+  // get marked, and clicking one focuses its card in the Optimize panel.
+  const allSuggs = s.suggestions || [];
+  const findingFor = (a) =>
+    allSuggs.find((g) => g.kind !== 'recache' && actionMatches(g, a)) || null;
+  const focusFinding = (g) => {
+    state.highlight = { kind: g.kind, subject: g.subject };
+    if (!state.suggExpanded[s.id] && !cappedSuggs(allSuggs).includes(g)) {
+      state.suggExpanded[s.id] = true; // card is past the caps — reveal it
+    }
+    renderDetail();
+    requestAnimationFrame(() => {
+      const active = document.querySelector('.sugg-item.active');
+      if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
+
   // timeline — newest turn first
   const turnsBox = $('turns');
   turnsBox.replaceChildren();
   const turns = [...(s.turns || [])].reverse();
   const maxTok = Math.max(200, ...turns.flatMap((t) => t.actions.map((a) => a.tokens)));
   turns.forEach((t, i) => {
-    const key = `${s.id}|${t.ts}|${(t.prompt || '').slice(0, 40)}`;
+    const key = turnKey(s.id, t);
     const expanded = state.turnToggles[key] ?? (i === 0); // newest open by default
     const turn = el('div', 'turn' + (expanded ? '' : ' collapsed'));
     const head = el('div', 'turn-head');
@@ -164,7 +208,13 @@ function renderDetail() {
     turn.append(head);
     const actionsBox = el('div', 'turn-actions');
     for (const a of t.actions) {
-      const row = el('div', 'arow');
+      const row = el('div', 'arow' + (actionMatches(state.highlight, a) ? ' hl' : ''));
+      const found = findingFor(a);
+      if (found) {
+        row.classList.add('opt');
+        row.title = 'Part of an Optimize finding — click to focus it';
+        row.onclick = () => focusFinding(found);
+      }
       const label = el('span', 'al');
       const [tool, ...rest] = (a.label || a.name).split(' ');
       label.append(document.createTextNode(tool + ' '));
@@ -181,6 +231,85 @@ function renderDetail() {
     turn.append(actionsBox);
     turnsBox.append(turn);
   });
+
+  // optimize suggestions
+  const SUGG = {
+    search: (g) => [
+      `${g.subject} — ${g.count}× · ${fmtTok(g.impact)}`,
+      'Document this concept in a docs .md (what it is, where it lives) so Claude reads a focused doc instead of searching the codebase.',
+    ],
+    reread: (g) => [
+      `${relPath(g.subject, s.cwd)} — read ${g.count}× · ${fmtTok(g.impact)}`,
+      'Add a short doc covering this file’s API (or split the file) so re-checks are cheap.',
+    ],
+    fatdoc: (g) => [
+      `${relPath(g.subject, s.cwd)} — ~${fmtTok(Math.round(g.impact / g.count))} per read · ${g.count} reads`,
+      'Split into smaller focused docs so only the relevant part loads.',
+    ],
+    recache: (g) => [
+      `${fmtTok(g.impact)} re-cached after idle gaps (${g.count}% of input spend)`,
+      'The prompt cache expires when a session sits idle; grouping interactions (or starting fresh sessions) avoids re-paying the whole prefix.',
+    ],
+  };
+  const suggWrap = $('sugg-wrap');
+  const suggRows = $('sugg-rows');
+  suggRows.replaceChildren();
+  suggWrap.hidden = allSuggs.length === 0;
+  const expandedSuggs = !!state.suggExpanded[s.id];
+  const suggs = expandedSuggs ? allSuggs : cappedSuggs(allSuggs);
+  for (const g of suggs) {
+    const render = SUGG[g.kind];
+    if (!render) continue;
+    const [headline, fix] = render(g);
+    const clickable = g.kind !== 'recache';
+    const isActive = clickable && state.highlight &&
+      state.highlight.kind === g.kind && state.highlight.subject === g.subject;
+    const item = el('div', 'sugg-item' + (clickable ? ' clickable' : '') + (isActive ? ' active' : ''));
+    const hl = el('div', 'sugg-head', headline);
+    hl.title = clickable ? 'Show these calls in the timeline' : (g.subject || '');
+    item.append(hl);
+    if (g.context) item.append(el('div', 'sugg-ctx', `during: ${g.context.slice(0, 90)}`));
+    item.append(el('div', 'sugg-fix', fix));
+    if (clickable) {
+      item.tabIndex = 0;
+      item.setAttribute('role', 'button');
+      const jump = () => {
+        const next = isActive ? null : { kind: g.kind, subject: g.subject };
+        state.highlight = next;
+        if (next) {
+          for (const t of s.turns || []) {
+            if (t.actions.some((a) => actionMatches(next, a))) state.turnToggles[turnKey(s.id, t)] = true;
+          }
+          for (const ag of s.agents || []) {
+            if ((ag.actions || []).some((a) => actionMatches(next, a))) {
+              state.agentToggles[`${s.id}|${ag.id}`] = true;
+            }
+          }
+        }
+        renderDetail();
+        if (next) {
+          requestAnimationFrame(() => {
+            const first = document.querySelector('.hl');
+            if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+        }
+      };
+      item.onclick = jump;
+      item.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jump(); }
+      };
+    }
+    suggRows.append(item);
+  }
+  const hiddenCount = allSuggs.length - suggs.length;
+  if (hiddenCount > 0 || expandedSuggs) {
+    const more = el('button', 'sugg-more', expandedSuggs ? 'show less' : `show ${hiddenCount} more`);
+    more.onclick = () => {
+      state.suggExpanded[s.id] = !expandedSuggs;
+      renderDetail();
+    };
+    suggRows.append(more);
+  }
 
   // docs leaderboard
   const docsBox = $('doc-rows');
@@ -233,7 +362,13 @@ function renderDetail() {
       item.append(el('div', 'agent-meta', metaBits.join(' · ')));
       const list = el('div', 'agent-actions');
       for (const x of a.actions || []) {
-        const r = el('div', 'agent-action');
+        const r = el('div', 'agent-action' + (actionMatches(state.highlight, x) ? ' hl' : ''));
+        const found = findingFor(x);
+        if (found) {
+          r.classList.add('opt');
+          r.title = 'Part of an Optimize finding — click to focus it';
+          r.onclick = () => focusFinding(found);
+        }
         const dot = el('i', 'adot');
         dot.style.background = catColor(x.cat);
         const lbl = el('span', 'aal', x.label);
