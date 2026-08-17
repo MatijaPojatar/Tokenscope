@@ -10,16 +10,33 @@ It runs as a local web page next to your terminal and shows, for every session:
   (base system context, conversation, docs read, code read, search results,
   tool output, assistant output).
 - **Per-action cost** — every Read / Grep / Glob / Edit / agent call with the
-  tokens it added to context, grouped by prompt.
-- **Docs leaderboard** — which `.md` files (including auto-injected CLAUDE.md)
-  were read, how often, and what they cost — so you can see whether Claude
-  finds the right docs and what that search costs.
+  tokens it added to context, its timestamp, and its execution duration,
+  grouped by prompt into collapsible turns.
+- **Base context** — what every session pays at start, itemized: CLAUDE.md
+  and the files it `@`-imports (followed recursively from disk), rules,
+  MEMORY.md, and the system-prompt remainder — plus a second group for
+  context the harness injects during the session (hook output, re-injected
+  edited files, skill listings, reminders), measured from usage. Every row
+  expands to sizes, dates, injection counts, and observed-use signals.
+- **Optimize** — suggestions computed from actual token spend, seven kinds:
+  expensive search patterns (→ document the concept), files re-read many
+  times (→ summarize or split), fat docs (→ split), heavy harness injections
+  (→ trim hook output), always-loaded base files (→ move out of `@`-imports),
+  cache re-writes after idle gaps, and repeated commands (→ package as a
+  skill or hook). Clicking a finding highlights its calls in the timeline,
+  and clicking a flagged call focuses its finding.
+- **Docs leaderboard** — which `.md` files (project `.claude\` docs and
+  auto-injected CLAUDE.md included) were read, how often, and what they
+  cost. Each doc expands to every individual use — time, tokens, and the
+  prompt or agent it served — with click-to-jump into the timeline. Base
+  files with no observed use are flagged separately.
 - **Agents** — subagents spawned by a session, each with its own context
-  window: tokens used, calls made, docs read (their docs reads join the
-  leaderboard, marked `A`).
-- **Docs across sessions** — the `docs` button shows every doc read by any
-  session or agent in the loaded window: reads, tokens, session count. The
-  fastest way to spot docs that never get read.
+  window: model, runtime, tokens, and the full list of its tool calls with
+  per-call costs. Agent docs reads join the leaderboard, marked `A`.
+- **Docs across sessions** — the `docs` button aggregates every doc read by
+  any session or agent in the loaded window, plus a "loaded every session ·
+  never read or edited" section: the strongest observable dead-weight signal
+  for `@`-imported docs.
 - **Cost & rate limits** — session USD cost and account rate-limit fill, fed
   by the statusline integration below.
 
@@ -50,6 +67,12 @@ and injected attachments — prorated by size. `cache_read_input_tokens` is the
 already-paid prefix. That yields exact per-turn costs and close per-action
 costs without any configuration.
 
+Base-context files are sized by a disk scan of the session's project
+(CLAUDE.md with its `@`-imports followed recursively, `.claude\rules`,
+auto-memory). One honest limitation: in-context *use* of loaded content is
+not logged anywhere — Reads, edits, and load counts are the observable
+signals, and the UI says so wherever it matters.
+
 Optionally, Claude Code hooks can POST real-time events to `/event` for
 instant "action happening now" signals (see `hooks/settings-snippet.json`).
 Tokenscope works without them — hooks only reduce latency.
@@ -78,8 +101,9 @@ the collector runs; the exporter logs warnings when its endpoint is down.
 src/server.js            HTTP + SSE + static + hook/status/OTel ingest
 src/watcher.js           session + subagent discovery, transcript tailing
 src/adapter.js           transcript JSONL parsing — the ONLY format-aware module
-src/attribution.js       usage-delta attribution engine (sessions + agents)
-src/store.js             session store + SSE broadcast + docs report
+src/attribution.js       usage-delta attribution engine, suggestions (sessions + agents)
+src/basescan.js          base-context disk scan, follows CLAUDE.md @-imports
+src/store.js             session store + SSE broadcast + cross-session docs report
 src/otel.js              minimal OTLP/HTTP JSON logs parser
 statusline/statusline.js Claude Code statusline: prints a line, feeds the collector
 public/                  the visualizer UI
