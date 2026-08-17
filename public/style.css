@@ -202,6 +202,30 @@ h2 {
 .arow.opt .anum, .agent-action.opt .anum { color: var(--accent); font-weight: 600; }
 .arow.opt:hover, .agent-action.opt:hover { background: var(--panel); border-radius: 4px; }
 
+/* ---- expandable docs ---- */
+.doc-head { cursor: pointer; user-select: none; }
+.doc-head:hover .dp { color: var(--accent); }
+.doc-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.doc-meta {
+  font-family: var(--mono); font-size: 0.66rem; color: var(--muted);
+  padding: 0.3rem 0 0.15rem 0.9rem;
+}
+.doc-uses {
+  margin: 0.2rem 0 0.6rem 0.3rem;
+  padding: 0.1rem 0 0.1rem 0.55rem;
+  border-left: 2px solid var(--line);
+}
+.doc-use {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.5rem; align-items: center;
+  font-family: var(--mono); font-size: 0.68rem;
+  padding: 0.13rem 0; cursor: pointer;
+}
+.doc-use:hover { background: var(--panel); border-radius: 4px; }
+.du-time { color: var(--muted); font-size: 0.62rem; white-space: nowrap; }
+.du-ctx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.du-note { font-family: var(--mono); font-size: 0.62rem; color: var(--muted); padding: 0.15rem 0; }
+
 /* ---- expandable agents ---- */
 .agent-head { cursor: pointer; user-select: none; }
 .agent-head:hover .dp { color: var(--accent); }

@@ -27,18 +27,23 @@ const state = {
   agentToggles: {}, // agent key -> expanded
   highlight: null, // {kind, subject} from a clicked Optimize entry
   suggExpanded: {}, // session id -> show all findings past the per-kind caps
+  docToggles: {}, // doc key -> expanded
 };
+
+// Is this action a read of the given doc? (labels hold relative paths,
+// docs hold absolute ones — match on the suffix)
+function docActionMatch(path, a) {
+  if (a.cat !== 'docsRead') return false;
+  const lp = a.label.replace(/^(Read|auto) /, '').replace(/\//g, '\\').toLowerCase();
+  return lp.length > 0 && String(path).replace(/\//g, '\\').toLowerCase().endsWith(lp);
+}
 
 // Does an action row belong to the clicked Optimize finding?
 function actionMatches(hl, a) {
   if (!hl) return false;
   if (hl.kind === 'search') return a.cat === 'search' && a.label === hl.subject;
   if (hl.kind === 'reread') return a.label === 'Read ' + hl.subject;
-  if (hl.kind === 'fatdoc') {
-    if (a.cat !== 'docsRead') return false;
-    const lp = a.label.replace(/^(Read|auto) /, '').replace(/\//g, '\\').toLowerCase();
-    return lp.length > 0 && String(hl.subject).replace(/\//g, '\\').toLowerCase().endsWith(lp);
-  }
+  if (hl.kind === 'fatdoc') return docActionMatch(hl.subject, a);
   return false;
 }
 
@@ -220,8 +225,9 @@ function renderDetail() {
     };
     turn.append(head);
     const actionsBox = el('div', 'turn-actions');
-    for (const a of t.actions) {
+    for (const [ai, a] of t.actions.entries()) {
       const row = el('div', 'arow' + (actionMatches(state.highlight, a) ? ' hl' : ''));
+      row.dataset.akey = `${key}#${ai}`;
       const found = findingFor(a);
       if (found) {
         row.classList.add('opt');
@@ -333,12 +339,77 @@ function renderDetail() {
     docsBox.append(el('div', 'ds', 'no docs read yet'));
   }
   for (const d of s.docs || []) {
-    const row = el('div', 'doc-row');
-    const name = el('span', 'dp', relPath(d.path, s.cwd));
+    const dkey = `${s.id}|${d.path}`;
+    const docExpanded = !!state.docToggles[dkey];
+    const item = el('div', 'doc-item');
+    const head = el('div', 'doc-row doc-head');
+    head.tabIndex = 0;
+    head.setAttribute('role', 'button');
+    head.setAttribute('aria-expanded', String(docExpanded));
+    const name = el('span', 'dp', (docExpanded ? '▾ ' : '▸ ') + relPath(d.path, s.cwd));
     if (d.agent) name.append(el('i', 'abadge', 'A'));
-    row.append(name, el('span', 'ds', `${d.reads}× · ${fmtTok(d.tokens)}`));
-    row.title = d.path + (d.agent ? ' (read by a subagent)' : '');
-    docsBox.append(row);
+    head.append(name, el('span', 'ds', `${d.reads}× · ${fmtTok(d.tokens)}`));
+    head.title = d.path + (d.agent ? ' (read by a subagent)' : '');
+    const docToggle = () => { state.docToggles[dkey] = !docExpanded; renderDetail(); };
+    head.onclick = docToggle;
+    head.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); docToggle(); }
+    };
+    item.append(head);
+
+    if (docExpanded) {
+      // every use of this doc across the loaded turns and agents
+      const uses = [];
+      for (const t of s.turns || []) {
+        t.actions.forEach((a, ai) => {
+          if (docActionMatch(d.path, a)) uses.push({ t, a, akey: `${turnKey(s.id, t)}#${ai}` });
+        });
+      }
+      for (const ag of s.agents || []) {
+        (ag.actions || []).forEach((x, xi) => {
+          if (docActionMatch(d.path, x)) {
+            uses.push({ agent: ag, a: x, akey: `agent|${s.id}|${ag.id}#${xi}` });
+          }
+        });
+      }
+      const avg = Math.round(d.tokens / Math.max(1, d.reads));
+      const stamps = uses.map((u) => u.a.ts).filter(Boolean).sort();
+      const metaBits = [
+        `${d.reads} reads · ${fmtTok(d.tokens)} · ~${fmtTok(avg)}/read`,
+        stamps.length ? `${fmtClock(stamps[0])} → ${fmtClock(stamps[stamps.length - 1])}` : null,
+      ].filter(Boolean);
+      item.append(el('div', 'doc-meta', metaBits.join(' · ')));
+
+      const list = el('div', 'doc-uses');
+      for (const u of uses) {
+        const r = el('div', 'doc-use');
+        const ctx = u.agent
+          ? `agent: ${(u.agent.title || u.agent.id).slice(0, 60)}`
+          : `"${(u.t.prompt || '').slice(0, 60)}"`;
+        r.append(
+          el('span', 'du-time', fmtClock(u.a.ts)),
+          el('span', 'du-ctx', ctx),
+          el('span', 'anum', '+' + fmtTok(u.a.tokens)),
+        );
+        r.title = 'Jump to this call in the timeline';
+        r.onclick = () => {
+          state.highlight = { kind: 'fatdoc', subject: d.path };
+          if (u.t) state.turnToggles[turnKey(s.id, u.t)] = true;
+          if (u.agent) state.agentToggles[`${s.id}|${u.agent.id}`] = true;
+          renderDetail();
+          requestAnimationFrame(() => {
+            const target = document.querySelector(`[data-akey="${CSS.escape(u.akey)}"]`);
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+        };
+        list.append(r);
+      }
+      if (uses.length < d.reads) {
+        list.append(el('div', 'du-note', `${d.reads - uses.length} more outside the loaded window`));
+      }
+      item.append(list);
+    }
+    docsBox.append(item);
   }
 
   // agents — each runs in its own context window
@@ -376,8 +447,9 @@ function renderDetail() {
       ].filter(Boolean);
       item.append(el('div', 'agent-meta', metaBits.join(' · ')));
       const list = el('div', 'agent-actions');
-      for (const x of a.actions || []) {
+      for (const [xi, x] of (a.actions || []).entries()) {
         const r = el('div', 'agent-action' + (actionMatches(state.highlight, x) ? ' hl' : ''));
+        r.dataset.akey = `agent|${s.id}|${a.id}#${xi}`;
         const found = findingFor(x);
         if (found) {
           r.classList.add('opt');
