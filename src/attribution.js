@@ -41,13 +41,20 @@ function classifyTool(name, input) {
   return 'toolOther';
 }
 
+// Collapse whitespace (multi-line commands become one row) and clip with a
+// visible ellipsis only when genuinely over the cap.
+function clip(s, n) {
+  const one = String(s).replace(/\s+/g, ' ').trim();
+  return one.length > n ? one.slice(0, n) + '…' : one;
+}
+
 function toolLabel(name, input, cwd) {
   if (!input) return name;
   if (input.file_path) return `${name} ${displayPath(input.file_path, cwd)}`;
-  if (input.pattern) return `${name} "${String(input.pattern).slice(0, 40)}"`;
-  if (input.command) return `${name} ${String(input.command).slice(0, 50)}`;
-  if (input.description) return `${name} ${String(input.description).slice(0, 50)}`;
-  if (input.prompt) return `${name} ${String(input.prompt).slice(0, 50)}`;
+  if (input.pattern) return `${name} "${clip(input.pattern, 80)}"`;
+  if (input.command) return `${name} ${clip(input.command, 200)}`;
+  if (input.description) return `${name} ${clip(input.description, 120)}`;
+  if (input.prompt) return `${name} ${clip(input.prompt, 120)}`;
   return name;
 }
 
