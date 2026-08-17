@@ -85,6 +85,9 @@ export class SessionModel {
     this.prevOutput = 0; // last call's output tokens — re-enter cache next call
     this.maxContext = 0;
     this.agents = new Map(); // agentId -> SessionModel (own context window)
+    this.baseFiles = null; // disk-scanned base-context files (set by the store)
+    this.baseScanRequested = false;
+    this.baseAttachments = new Map(); // atype -> {label, chars, tokens, count}
     this.costUsd = null; // authoritative session cost from the statusline feed
     this.exactCostUsd = 0; // accumulated from OTel api_request events
     this.windowExact = null; // exact window size from the statusline feed
@@ -172,7 +175,19 @@ export class SessionModel {
           this.docs.set(evt.path, d);
           this.pending.push({ cat: 'docsRead', chars: evt.chars, action, docPath: evt.path });
         } else {
-          this.pending.push({ cat: 'attachments', chars: evt.chars });
+          // Track injected context by type so the base-context panel can
+          // itemize what the harness added (skill listing, tool deltas, ...).
+          const label = evt.atype || 'attachment';
+          const rec = this.baseAttachments.get(label) ||
+            { label, chars: 0, tokens: 0, count: 0, firstTs: null, lastTs: null };
+          rec.chars += evt.chars;
+          rec.count += 1;
+          if (evt.timestamp) {
+            rec.firstTs = rec.firstTs || evt.timestamp;
+            rec.lastTs = evt.timestamp;
+          }
+          this.baseAttachments.set(label, rec);
+          this.pending.push({ cat: 'attachments', chars: evt.chars, baseRec: rec });
         }
         return;
       }
@@ -365,7 +380,25 @@ export class SessionModel {
     }
     // Send every finding — the UI shows a per-kind capped subset by default
     // with a "show more" toggle for the rest.
-    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs);
+    const injectedSuggs = [];
+    for (const rec of this.baseAttachments.values()) {
+      if (rec.tokens >= 15000) {
+        injectedSuggs.push({
+          kind: 'injected', impact: rec.tokens, count: rec.count,
+          subject: rec.label, context: null,
+        });
+      }
+    }
+    // Heavy always-loaded base files (@-imported CLAUDE.md content, rules):
+    // paid at the start of every session in this project.
+    const basefileSuggs = [];
+    for (const f of this.baseFiles || []) {
+      const t = est(f.chars);
+      if (t >= 2000) {
+        basefileSuggs.push({ kind: 'basefile', impact: t, count: 1, subject: f.label, context: null });
+      }
+    }
+    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs, ...injectedSuggs, ...basefileSuggs);
     out.sort(byImpact);
     out.splice(40);
     // Recache is mostly a workflow fact, not a docs fix — one entry, always last,
@@ -385,6 +418,7 @@ export class SessionModel {
   credit(p, tokens) {
     this.context[p.cat] = (this.context[p.cat] || 0) + tokens;
     if (p.action) p.action.tokens += tokens;
+    if (p.baseRec) p.baseRec.tokens += tokens;
     if (p.docPath && p.cat === 'docsRead') {
       const d = this.docs.get(p.docPath);
       if (d) d.tokens += tokens;
@@ -407,6 +441,8 @@ export class SessionModel {
       turns: this.turns.slice(-60),
       docs: this.mergedDocs().slice(0, 30),
       suggestions: this.suggestions(),
+      baseFiles: this.baseFiles,
+      baseAttachments: [...this.baseAttachments.values()].sort((a, b) => b.tokens - a.tokens),
       agents: [...this.agents.values()].map((a) => ({
         id: a.id,
         title: a.title,

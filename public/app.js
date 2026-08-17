@@ -28,7 +28,31 @@ const state = {
   highlight: null, // {kind, subject} from a clicked Optimize entry
   suggExpanded: {}, // session id -> show all findings past the per-kind caps
   docToggles: {}, // doc key -> expanded
+  baseToggles: {}, // base-context row key -> expanded
 };
+
+// What each harness-injected attachment type is.
+const ATT_DESC = {
+  skill_listing: 'The list of available skills and their descriptions, injected at session start.',
+  agent_listing_delta: 'Available agent types for the Agent tool.',
+  deferred_tools_delta: 'Names of deferred tools as they become available.',
+  todo_reminder: 'Periodic harness reminders about the task list.',
+  edited_text_file: 'Full file contents re-injected after edits so Claude sees current state.',
+  hook_additional_context: 'Output returned by your configured hooks, added into context.',
+  file: 'File contents attached by the harness.',
+  plan_file_reference: 'Plan file content referenced into context.',
+  nested_memory: 'CLAUDE.md from a subdirectory, auto-injected when files there were read.',
+};
+
+// What each disk-scanned base file is.
+function baseFileDesc(label) {
+  if (label.startsWith('↳')) return 'Imported via @-reference from a CLAUDE.md above — loaded with it at session start.';
+  if (label.includes('(user)')) return 'Your global CLAUDE.md — loaded at the start of every session on this machine.';
+  if (label.includes('CLAUDE.md (project)')) return 'Project CLAUDE.md — loaded at the start of every session in this project.';
+  if (label.includes('MEMORY.md')) return 'Auto-memory index — loaded each session; individual memories load on demand.';
+  if (label.includes('rules')) return 'Rules file from .claude\\rules — loaded at session start.';
+  return 'Loaded into the base context at session start.';
+}
 
 // Is this action a read of the given doc? (labels hold relative paths,
 // docs hold absolute ones — match on the suffix)
@@ -49,8 +73,21 @@ function actionMatches(hl, a) {
 
 const turnKey = (sid, t) => `${sid}|${t.ts}|${(t.prompt || '').slice(0, 40)}`;
 
+// Friendly names for harness-injected attachment types.
+const ATT_NAMES = {
+  skill_listing: 'skill listing',
+  agent_listing_delta: 'agent listing',
+  deferred_tools_delta: 'deferred tools',
+  todo_reminder: 'todo reminders',
+  edited_text_file: 'edited files re-injected',
+  hook_additional_context: 'hook context',
+  file: 'file attachments',
+  plan_file_reference: 'plan file',
+  nested_memory: 'nested CLAUDE.md',
+};
+
 // Default per-kind display caps for the Optimize panel.
-const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, recache: 99 };
+const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, injected: 2, basefile: 3, recache: 99 };
 function cappedSuggs(all) {
   const seen = {};
   return all.filter((g) => {
@@ -253,6 +290,110 @@ function renderDetail() {
     turnsBox.append(turn);
   });
 
+  // base context breakdown: disk-scanned files + measured injections +
+  // the unitemizable remainder (system prompt, tool schemas)
+  const baseWrap = $('base-wrap');
+  const baseRows = $('base-rows');
+  baseRows.replaceChildren();
+  const baseTotal = (s.context && s.context.base) || 0;
+  baseWrap.hidden = baseTotal === 0;
+  if (baseTotal > 0) {
+    const estTok = (chars) => Math.max(1, Math.round(chars / 3.8));
+    const addBaseRow = (id, k, v, detail) => {
+      const rowKey = `${s.id}|${id}`;
+      const open = !!state.baseToggles[rowKey];
+      const r = el('div', 'base-row' + (detail ? ' exp' : ''));
+      r.append(el('span', null, (detail ? (open ? '▾ ' : '▸ ') : '') + k), el('b', null, v));
+      baseRows.append(r);
+      if (!detail) return;
+      r.tabIndex = 0;
+      r.setAttribute('role', 'button');
+      r.setAttribute('aria-expanded', String(open));
+      const tgl = () => { state.baseToggles[rowKey] = !open; renderDetail(); };
+      r.onclick = tgl;
+      r.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tgl(); }
+      };
+      if (open) {
+        const box = el('div', 'base-detail');
+        for (const line of detail().filter(Boolean)) box.append(el('div', null, line));
+        baseRows.append(box);
+      }
+    };
+
+    const addGroupHead = (label, v) => {
+      const h = el('div', 'base-group');
+      h.append(el('span', null, label), el('b', null, v));
+      baseRows.append(h);
+    };
+    addGroupHead('loaded at session start', fmtTok(baseTotal));
+
+    // Observable usage signals for an always-loaded file. In-context use
+    // isn't logged anywhere, so we report what is: explicit Reads/Edits of
+    // the same file, and how many sessions paid to load it.
+    const fileUsage = (f) => {
+      const norm = String(f.path).replace(/\//g, '\\').toLowerCase();
+      let reads = 0;
+      let edits = 0;
+      const scan = (acts) => {
+        for (const a of acts) {
+          const sp = a.label.indexOf(' ');
+          if (sp < 0) continue;
+          const verb = a.label.slice(0, sp);
+          const rest = a.label.slice(sp + 1).replace(/\//g, '\\').toLowerCase();
+          if (!rest || !norm.endsWith(rest)) continue;
+          if (verb === 'Read' || verb === 'auto') reads += 1;
+          else if (verb === 'Edit' || verb === 'Write') edits += 1;
+        }
+      };
+      for (const t of s.turns || []) scan(t.actions);
+      for (const ag of s.agents || []) scan(ag.actions || []);
+      return { reads, edits };
+    };
+    const projSessionCount = Math.max(1, state.sessions.filter(
+      (x) => x.cwd && s.cwd && x.cwd.toLowerCase() === s.cwd.toLowerCase()).length);
+
+    let diskSum = 0;
+    for (const f of s.baseFiles || []) {
+      const t = estTok(f.chars);
+      diskSum += t;
+      addBaseRow(`file|${f.path}`, f.label, '~' + fmtTok(t), () => {
+        const u = fileUsage(f);
+        return [
+          f.path,
+          `${(f.chars / 1024).toFixed(1)} KB · ${f.lines ?? '?'} lines · ~${fmtTok(t)} tokens (estimated)`,
+          f.mtime ? `modified ${new Date(f.mtime).toLocaleString('en-GB')}` : null,
+          `loaded by ${projSessionCount} session${projSessionCount === 1 ? '' : 's'} in this window · ~${fmtTok(t * projSessionCount)} total`,
+          `this session: read directly ${u.reads}× · edited ${u.edits}×`,
+          baseFileDesc(f.label),
+          'In-context use isn’t logged by Claude — loads, Reads, and edits are the observable signals.',
+        ];
+      });
+    }
+    const remainder = baseTotal - diskSum;
+    if (remainder > 0) {
+      addBaseRow('remainder', 'system prompt + tools (est.)', '~' + fmtTok(remainder), () => [
+        'Claude Code’s system prompt, tool definitions, and other startup content.',
+        'Not itemized in the transcript — estimated as the base total minus the files above.',
+        'Run /context in the terminal for the interactive breakdown.',
+      ]);
+    }
+    const injectedList = (s.baseAttachments || []).filter((a) => (a.tokens || estTok(a.chars)) > 0);
+    if (injectedList.length > 0) {
+      const injSum = injectedList.reduce((n, a) => n + (a.tokens || estTok(a.chars)), 0);
+      addGroupHead('injected during session', fmtTok(injSum));
+    }
+    for (const a of injectedList) {
+      const tok = a.tokens || estTok(a.chars);
+      addBaseRow(`att|${a.label}`, ATT_NAMES[a.label] || a.label, fmtTok(tok), () => [
+        ATT_DESC[a.label] || 'Harness-injected context.',
+        `${a.count} injection${a.count === 1 ? '' : 's'} · ~${fmtTok(Math.round(tok / Math.max(1, a.count)))} each · ${(a.chars / 1024).toFixed(1)} KB total`,
+        a.firstTs ? `first ${fmtClock(a.firstTs)} · last ${fmtClock(a.lastTs)}` : null,
+        a.tokens > 0 ? 'Tokens measured from usage attribution.' : 'Tokens estimated from size.',
+      ]);
+    }
+  }
+
   // optimize suggestions
   const SUGG = {
     search: (g) => [
@@ -271,6 +412,22 @@ function renderDetail() {
       `${fmtTok(g.impact)} re-cached after idle gaps (${g.count}% of input spend)`,
       'The prompt cache expires when a session sits idle; grouping interactions (or starting fresh sessions) avoids re-paying the whole prefix.',
     ],
+    basefile: (g) => [
+      `${g.subject} — ~${fmtTok(g.impact)} every session`,
+      'Loaded at every session start in this project (@-imported into CLAUDE.md). Trim it, or move it to an on-demand doc that Claude Reads only when the task needs it — the docs leaderboard will then show whether it earns its keep.',
+    ],
+    injected: (g) => {
+      const FIX = {
+        hook_additional_context: 'A hook is injecting output into context on many tool calls — check hooks in settings.json and trim what they print.',
+        edited_text_file: 'Edited files are re-injected in full — frequent edits to large files re-pay their content each time; smaller files and batched edits reduce this.',
+        todo_reminder: 'Harness reminders accumulate over very long sessions — starting a fresh session per task avoids the buildup.',
+        plan_file_reference: 'Plan files get re-referenced into context — keep plans lean.',
+      };
+      return [
+        `${ATT_NAMES[g.subject] || g.subject} — ${g.count}× · ${fmtTok(g.impact)} injected`,
+        FIX[g.subject] || 'Harness-injected context — mostly automatic; leaner hook output and shorter sessions reduce it.',
+      ];
+    },
   };
   const suggWrap = $('sugg-wrap');
   const suggRows = $('sugg-rows');
@@ -282,7 +439,7 @@ function renderDetail() {
     const render = SUGG[g.kind];
     if (!render) continue;
     const [headline, fix] = render(g);
-    const clickable = g.kind !== 'recache';
+    const clickable = g.kind !== 'recache' && g.kind !== 'injected' && g.kind !== 'basefile';
     const isActive = clickable && state.highlight &&
       state.highlight.kind === g.kind && state.highlight.subject === g.subject;
     const item = el('div', 'sugg-item' + (clickable ? ' clickable' : '') + (isActive ? ' active' : ''));

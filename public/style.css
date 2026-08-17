@@ -161,6 +161,36 @@ h2 {
 .doc-row .dp { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .doc-row .ds { color: var(--muted); white-space: nowrap; }
 
+#base-wrap { margin-bottom: 1.6rem; }
+.base-list { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+.base-group {
+  display: flex; justify-content: space-between; gap: 0.8rem;
+  font-size: 0.62rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--accent);
+  padding: 0.55rem 0 0.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.base-group:first-child { padding-top: 0.1rem; }
+.base-group b { color: var(--ink); }
+.base-row {
+  display: flex; justify-content: space-between; gap: 0.8rem;
+  padding: 0.22rem 0; border-bottom: 1px dashed var(--line);
+}
+.base-row b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.base-row.exp { cursor: pointer; user-select: none; }
+.base-row.exp:hover span { color: var(--accent); }
+.base-row.exp:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.base-detail {
+  font-size: 0.66rem; color: var(--muted);
+  margin: 0.15rem 0 0.25rem 0.2rem;
+  padding: 0.2rem 0 0.3rem 0.7rem;
+  border-left: 2px solid var(--line);
+  border-bottom: 1px dashed var(--line);
+  overflow-wrap: anywhere;
+}
+.base-detail div { padding: 0.07rem 0; }
+
 /* ---- optimize suggestions ---- */
 #sugg-wrap { margin-bottom: 1.6rem; }
 .sugg-item {

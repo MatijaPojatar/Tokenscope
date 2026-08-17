@@ -28,6 +28,10 @@ export class Store {
     const s = this.getOrCreate(sessionId);
     if (agentId) s.agentEvent(agentId, evt);
     else s.addEvent(evt);
+    if (!agentId && s.cwd && !s.baseScanRequested && this.onBaseScan) {
+      s.baseScanRequested = true;
+      this.onBaseScan(s); // async disk scan of base-context files
+    }
     this.dirty.add(sessionId);
   }
 
