@@ -27,7 +27,10 @@ process.stdin.on('data', (c) => { raw += c; });
 process.stdin.on('end', async () => {
   const up = await portUp();
   if (!up) {
-    const child = spawn(process.execPath, [path.join(root, 'src', 'server.js')], {
+    const args = [path.join(root, 'src', 'server.js')];
+    // Optional backfill override, e.g. TOKENSCOPE_HOURS=720 for a 30-day window.
+    if (process.env.TOKENSCOPE_HOURS) args.push('--hours', process.env.TOKENSCOPE_HOURS);
+    const child = spawn(process.execPath, args, {
       detached: true,
       stdio: 'ignore',
       cwd: root,
