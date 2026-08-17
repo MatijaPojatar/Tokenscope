@@ -68,7 +68,19 @@ function actionMatches(hl, a) {
   if (hl.kind === 'search') return a.cat === 'search' && a.label === hl.subject;
   if (hl.kind === 'reread') return a.label === 'Read ' + hl.subject;
   if (hl.kind === 'fatdoc') return docActionMatch(hl.subject, a);
+  if (hl.kind === 'skill') return commandSig(a.label) === hl.subject;
   return false;
+}
+
+// Mirror of src/attribution.js commandSig — must stay in sync.
+function commandSig(label) {
+  const sp = label.indexOf(' ');
+  const tool = sp < 0 ? label : label.slice(0, sp);
+  let cmd = sp < 0 ? '' : label.slice(sp + 1);
+  cmd = cmd
+    .replace(/^cd\s+("[^"]*"|\S+)\s*(&&|;)\s*/i, '')
+    .replace(/^set-location\s+("[^"]*"|\S+)\s*(&&|;)\s*/i, '');
+  return `${tool} ${cmd.split(' ').slice(0, 3).join(' ')}`.trim();
 }
 
 const turnKey = (sid, t) => `${sid}|${t.ts}|${(t.prompt || '').slice(0, 40)}`;
@@ -87,7 +99,7 @@ const ATT_NAMES = {
 };
 
 // Default per-kind display caps for the Optimize panel.
-const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, injected: 2, basefile: 3, recache: 99 };
+const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, injected: 2, basefile: 3, skill: 2, recache: 99 };
 function cappedSuggs(all) {
   const seen = {};
   return all.filter((g) => {
@@ -411,6 +423,10 @@ function renderDetail() {
     recache: (g) => [
       `${fmtTok(g.impact)} re-cached after idle gaps (${g.count}% of input spend)`,
       'The prompt cache expires when a session sits idle; grouping interactions (or starting fresh sessions) avoids re-paying the whole prefix.',
+    ],
+    skill: (g) => [
+      `${g.subject}… — ran ${g.count}× · ${fmtTok(g.tokens)} in results`,
+      'A workflow Claude re-runs by hand — package it as a skill (.claude/skills/<name>/SKILL.md) with the exact command and how to read its output, or a hook in settings.json if it should run automatically.',
     ],
     basefile: (g) => [
       `${g.subject} — ~${fmtTok(g.impact)} every session`,

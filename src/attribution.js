@@ -34,6 +34,19 @@ function displayPath(p, cwd) {
 const HARNESS_PATH = /[\\/]\.claude[\\/]projects[\\/]|[\\/]tool-results[\\/]|[\\/]Temp[\\/]claude[\\/]/i;
 const isDocPath = (fp) => /\.(md|mdx|rst)$/i.test(fp) && !HARNESS_PATH.test(fp);
 
+// Invocation signature for grouping repeated commands: tool + first words of
+// the command, ignoring a leading cd/Set-Location prefix and volatile tails.
+// Mirrored in public/app.js for click-to-highlight matching.
+export function commandSig(label) {
+  const sp = label.indexOf(' ');
+  const tool = sp < 0 ? label : label.slice(0, sp);
+  let cmd = sp < 0 ? '' : label.slice(sp + 1);
+  cmd = cmd
+    .replace(/^cd\s+("[^"]*"|\S+)\s*(&&|;)\s*/i, '')
+    .replace(/^set-location\s+("[^"]*"|\S+)\s*(&&|;)\s*/i, '');
+  return `${tool} ${cmd.split(' ').slice(0, 3).join(' ')}`.trim();
+}
+
 function classifyTool(name, input) {
   if (name === 'Read') {
     const fp = (input && input.file_path) || '';
@@ -335,11 +348,24 @@ export class SessionModel {
     const out = [];
     const searches = new Map(); // label -> {tokens, count, context, agent}
     const reads = new Map(); // path -> {tokens, count}
+    const commands = new Map(); // command signature -> {tokens, count, context, agent}
 
     const collect = (turns, agentTitle) => {
       for (const t of turns) {
         for (const a of t.actions) {
-          if (a.cat === 'search') {
+          if (a.name === 'Bash' || a.name === 'PowerShell') {
+            const sig = commandSig(a.label);
+            const cur = commands.get(sig) ||
+              { tokens: 0, count: 0, context: null, maxTok: -1, agent: false };
+            cur.tokens += a.tokens;
+            cur.count += 1;
+            if (a.tokens > cur.maxTok) {
+              cur.maxTok = a.tokens;
+              cur.context = agentTitle ? `agent: ${agentTitle.slice(0, 60)}` : (t.prompt || null);
+            }
+            if (agentTitle) cur.agent = true;
+            commands.set(sig, cur);
+          } else if (a.cat === 'search') {
             const cur = searches.get(a.label) ||
               { tokens: 0, count: 0, context: null, maxTok: -1, agent: false };
             cur.tokens += a.tokens;
@@ -405,7 +431,20 @@ export class SessionModel {
         basefileSuggs.push({ kind: 'basefile', impact: t, count: 1, subject: f.label, context: null });
       }
     }
-    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs, ...injectedSuggs, ...basefileSuggs);
+    // Repeated command invocations: a workflow Claude re-runs by hand every
+    // time — a candidate for a skill (or a hook, if it should be automatic).
+    // Rank weights repetition as well as tokens: a cheap command run 20×
+    // is a stronger skill candidate than its token cost suggests.
+    const skillSuggs = [];
+    for (const [sig, c] of commands) {
+      if (c.count >= 5) {
+        skillSuggs.push({
+          kind: 'skill', impact: c.tokens + c.count * 150,
+          tokens: c.tokens, count: c.count, subject: sig, context: c.context,
+        });
+      }
+    }
+    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs, ...injectedSuggs, ...basefileSuggs, ...skillSuggs);
     out.sort(byImpact);
     out.splice(40);
     // Recache is mostly a workflow fact, not a docs fix — one entry, always last,
