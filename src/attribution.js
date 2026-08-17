@@ -122,12 +122,17 @@ export class SessionModel {
           const name = tu ? tu.name : 'tool';
           const input = tu ? tu.input : null;
           const cat = tu ? classifyTool(name, input) : 'toolOther';
+          // Execution time: result timestamp minus the issuing tool_use's.
+          const durMs = tu && tu.ts && evt.timestamp
+            ? Math.max(0, new Date(evt.timestamp) - new Date(tu.ts))
+            : null;
           const action = {
             name, cat,
             label: toolLabel(name, input, this.cwd),
             chars: r.chars,
             tokens: 0,
             ts: evt.timestamp,
+            durMs,
           };
           turn.actions.push(action);
           let docPath = null;
@@ -181,7 +186,7 @@ export class SessionModel {
         // API message arrive as separate lines sharing the same apiId.
         for (const b of evt.blocks) {
           if (b.type === 'tool_use' && b.id) {
-            this.toolUses.set(b.id, { name: b.name, input: b.input });
+            this.toolUses.set(b.id, { name: b.name, input: b.input, ts: evt.timestamp });
           }
         }
         if (this.seenApi.has(evt.apiId)) return; // usage already settled
@@ -410,7 +415,7 @@ export class SessionModel {
         actions: a.turns
           .flatMap((t) => t.actions)
           .slice(-200)
-          .map((x) => ({ label: x.label, cat: x.cat, tokens: x.tokens })),
+          .map((x) => ({ label: x.label, cat: x.cat, tokens: x.tokens, ts: x.ts, durMs: x.durMs })),
       })),
     };
   }

@@ -63,6 +63,19 @@ function fmtTok(n) {
   return String(n);
 }
 
+function fmtClock(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return isNaN(d) ? '' : d.toLocaleTimeString('en-GB', { hour12: false });
+}
+
+function fmtMs(ms) {
+  if (ms == null) return '';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  return `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+}
+
 function fmtDur(startTs, endTs) {
   if (!startTs || !endTs) return '';
   const s = Math.max(0, (new Date(endTs) - new Date(startTs)) / 1000);
@@ -195,7 +208,7 @@ function renderDetail() {
     head.append(
       el('span', 'chev', expanded ? '▾' : '▸'),
       el('span', 'tp', '> ' + (t.prompt || '')),
-      el('span', 'tt', `${t.actions.length} actions · +${fmtTok(t.fresh)} in · ${fmtTok(t.output)} out`),
+      el('span', 'tt', `${t.ts ? fmtClock(t.ts) + ' · ' : ''}${t.actions.length} actions · +${fmtTok(t.fresh)} in · ${fmtTok(t.output)} out`),
     );
     const toggle = () => {
       state.turnToggles[key] = !expanded;
@@ -225,7 +238,9 @@ function renderDetail() {
       fill.style.width = Math.max(1.5, (a.tokens / maxTok) * 100) + '%';
       fill.style.background = catColor(a.cat);
       bar.append(fill);
-      row.append(label, bar, el('span', 'anum', '+' + fmtTok(a.tokens)));
+      const time = el('span', 'atime',
+        [fmtClock(a.ts), a.durMs != null ? fmtMs(a.durMs) : null].filter(Boolean).join(' · '));
+      row.append(label, time, bar, el('span', 'anum', '+' + fmtTok(a.tokens)));
       actionsBox.append(row);
     }
     turn.append(actionsBox);
@@ -372,8 +387,12 @@ function renderDetail() {
         const dot = el('i', 'adot');
         dot.style.background = catColor(x.cat);
         const lbl = el('span', 'aal', x.label);
-        lbl.title = x.label;
-        r.append(dot, lbl, el('span', 'anum', '+' + fmtTok(x.tokens)));
+        lbl.title = x.label + (x.ts ? ` · ${fmtClock(x.ts)}` : '');
+        r.append(
+          dot, lbl,
+          el('span', 'adur', x.durMs != null ? fmtMs(x.durMs) : ''),
+          el('span', 'anum', '+' + fmtTok(x.tokens)),
+        );
         list.append(r);
       }
       if (!list.childElementCount) list.append(el('div', 'ds', 'no tool calls'));
