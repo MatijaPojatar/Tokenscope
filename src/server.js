@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Store } from './store.js';
 import { SessionWatcher, defaultRoot } from './watcher.js';
+import { extractApiRequests } from './otel.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -30,7 +31,7 @@ const MIME = {
 };
 
 const store = new Store();
-const watcher = new SessionWatcher(ROOT, (id, evt) => store.ingest(id, evt), HOURS);
+const watcher = new SessionWatcher(ROOT, (id, evt, agentId) => store.ingest(id, evt, agentId), HOURS);
 
 async function serveStatic(res, urlPath) {
   const rel = urlPath === '/' ? 'index.html' : urlPath.slice(1);
@@ -77,6 +78,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/docs') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(store.docsReport()));
+    return;
+  }
+
   if (url.pathname.startsWith('/api/session/')) {
     const id = url.pathname.slice('/api/session/'.length);
     const s = store.sessions.get(id);
@@ -99,6 +106,27 @@ const server = http.createServer(async (req, res) => {
         ts: Date.now(),
       } });
     } catch { /* malformed hook payload — ignore */ }
+    return;
+  }
+
+  // Statusline forwarder: exact context-window size, session cost, rate limits.
+  if (url.pathname === '/status' && req.method === 'POST') {
+    const body = await readBody(req);
+    res.writeHead(204).end();
+    try {
+      store.applyStatus(JSON.parse(body));
+    } catch { /* malformed snapshot — ignore */ }
+    return;
+  }
+
+  // OTLP/HTTP JSON logs: exact per-request cost from claude_code.api_request.
+  if (url.pathname === '/otel' && req.method === 'POST') {
+    const body = await readBody(req);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end('{}'); // OTLP expects a JSON success envelope
+    try {
+      store.applyOtelEvents(extractApiRequests(JSON.parse(body)));
+    } catch { /* not OTLP JSON — ignore */ }
     return;
   }
 

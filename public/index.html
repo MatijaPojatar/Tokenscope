@@ -10,7 +10,10 @@
 <body>
   <div id="app">
     <aside id="sidebar">
-      <div class="brand">tokenscope</div>
+      <div class="brand-row">
+        <div class="brand">tokenscope</div>
+        <button id="docs-btn" title="Docs across all sessions">docs</button>
+      </div>
       <div id="session-list"></div>
     </aside>
     <main id="main">
@@ -24,6 +27,8 @@
           <div class="head-meta">
             <span id="s-cwd" class="mono"></span>
             <span id="s-model" class="mono"></span>
+            <span id="s-cost" class="mono"></span>
+            <span id="s-rl" class="mono"></span>
             <span id="s-hook" class="mono hook"></span>
           </div>
           <div class="gauge-wrap">
@@ -43,10 +48,21 @@
           <section id="docs">
             <h2>Docs leaderboard</h2>
             <div id="doc-rows"></div>
+            <div id="agents-wrap" hidden>
+              <h2 style="margin-top:1.6rem">Agents</h2>
+              <div id="agent-rows"></div>
+            </div>
             <h2 style="margin-top:1.6rem">Session totals</h2>
             <div id="totals" class="totals"></div>
           </section>
         </div>
+      </div>
+      <div id="report" hidden>
+        <header class="report-head">
+          <h1>Docs across sessions</h1>
+          <span class="mono report-sub">every .md read by any session or agent in the loaded window</span>
+        </header>
+        <div id="report-rows"></div>
       </div>
     </main>
   </div>

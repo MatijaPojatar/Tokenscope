@@ -19,6 +19,10 @@ const state = {
   detail: {},      // id -> full session model
   selected: null,
   pinned: false,   // user clicked a session; stop auto-following
+  view: 'session', // 'session' | 'docs' (cross-session report)
+  rateLimits: null,
+  report: [],
+  reportFetched: 0,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -60,7 +64,7 @@ function renderList() {
       el('span', null, fmtAgo(s.lastActivity)),
     );
     item.append(meta);
-    item.onclick = () => { state.selected = s.id; state.pinned = true; render(); };
+    item.onclick = () => { state.selected = s.id; state.pinned = true; state.view = 'session'; render(); };
     box.append(item);
   }
 }
@@ -76,6 +80,13 @@ function renderDetail() {
   $('s-title').textContent = s.title || s.id;
   $('s-cwd').textContent = s.cwd || '';
   $('s-model').textContent = s.model || '';
+  $('s-cost').textContent = s.costUsd != null ? `$${s.costUsd.toFixed(2)}` : '';
+  const rl = state.rateLimits;
+  $('s-rl').textContent = rl
+    ? ['five_hour', 'seven_day'].filter((k) => rl[k] && rl[k].used_percentage != null)
+        .map((k) => `${k === 'five_hour' ? '5h' : '7d'} ${Math.round(rl[k].used_percentage)}%`)
+        .join(' · ')
+    : '';
   const active = s.lastActivity && Date.now() - new Date(s.lastActivity).getTime() < 120000;
   $('live-dot').className = 'dot' + (active ? ' on' : '');
 
@@ -145,12 +156,27 @@ function renderDetail() {
   for (const d of s.docs || []) {
     const row = el('div', 'doc-row');
     const parts = d.path.replace(/\//g, '\\').split('\\');
-    row.append(
-      el('span', 'dp', parts.slice(-3).join('\\')),
-      el('span', 'ds', `${d.reads}× · ${fmtTok(d.tokens)}`),
-    );
-    row.title = d.path;
+    const name = el('span', 'dp', parts.slice(-3).join('\\'));
+    if (d.agent) name.append(el('i', 'abadge', 'A'));
+    row.append(name, el('span', 'ds', `${d.reads}× · ${fmtTok(d.tokens)}`));
+    row.title = d.path + (d.agent ? ' (read by a subagent)' : '');
     docsBox.append(row);
+  }
+
+  // agents — each runs in its own context window
+  const agentsWrap = $('agents-wrap');
+  const agentRows = $('agent-rows');
+  agentRows.replaceChildren();
+  const agents = s.agents || [];
+  agentsWrap.hidden = agents.length === 0;
+  for (const a of [...agents].sort((x, y) => y.tokens - x.tokens)) {
+    const row = el('div', 'doc-row');
+    row.append(
+      el('span', 'dp', a.title || a.id),
+      el('span', 'ds', `${fmtTok(a.tokens)} · ${a.calls} calls · ${a.docsReads} docs`),
+    );
+    row.title = `${a.id} · ${a.model || ''} · context ${fmtTok(a.contextNow)}`;
+    agentRows.append(row);
   }
 
   // totals
@@ -170,13 +196,60 @@ function renderDetail() {
   }
 }
 
+function renderReport() {
+  const box = $('report-rows');
+  box.replaceChildren();
+  if (state.report.length === 0) {
+    box.append(el('div', 'ds', 'no docs read in the loaded window'));
+  }
+  for (const d of state.report) {
+    const row = el('div', 'doc-row report-row');
+    const parts = d.path.replace(/\//g, '\\').split('\\');
+    const name = el('span', 'dp', parts.slice(-4).join('\\'));
+    if (d.agent) name.append(el('i', 'abadge', 'A'));
+    row.append(
+      name,
+      el('span', 'ds', `${d.reads}× · ${fmtTok(d.tokens)} · ${d.sessions} session${d.sessions === 1 ? '' : 's'}`),
+    );
+    row.title = d.path;
+    box.append(row);
+  }
+}
+
+async function fetchReport(force) {
+  if (!force && Date.now() - state.reportFetched < 5000) return;
+  state.reportFetched = Date.now();
+  try {
+    const res = await fetch('/api/docs');
+    if (res.ok) {
+      state.report = await res.json();
+      if (state.view === 'docs') renderReport();
+    }
+  } catch { /* collector restarting */ }
+}
+
 function render() {
   if (!state.pinned && state.sessions.length > 0) {
     state.selected = state.sessions[0].id;
   }
   renderList();
-  renderDetail();
+  $('docs-btn').classList.toggle('active', state.view === 'docs');
+  if (state.view === 'docs') {
+    $('empty').hidden = true;
+    $('detail').hidden = true;
+    $('report').hidden = false;
+    renderReport();
+  } else {
+    $('report').hidden = true;
+    renderDetail();
+  }
 }
+
+$('docs-btn').onclick = () => {
+  state.view = state.view === 'docs' ? 'session' : 'docs';
+  if (state.view === 'docs') fetchReport(true);
+  render();
+};
 
 // ---- SSE ----
 
@@ -186,13 +259,15 @@ es.onmessage = (msg) => {
   const data = JSON.parse(msg.data);
   if (data.type === 'hello' || data.type === 'list') {
     state.sessions = data.sessions;
+    if (data.rateLimits) state.rateLimits = data.rateLimits;
     for (const s of state.sessions) {
       if (!state.detail[s.id]) fetchDetail(s.id);
     }
+    if (state.view === 'docs') fetchReport(false);
     render();
   } else if (data.type === 'session') {
     state.detail[data.session.id] = data.session;
-    if (data.session.id === state.selected) renderDetail();
+    if (data.session.id === state.selected && state.view === 'session') renderDetail();
   } else if (data.type === 'hook') {
     const h = $('s-hook');
     h.textContent = `${data.event.name}${data.event.tool ? ': ' + data.event.tool : ''}`;

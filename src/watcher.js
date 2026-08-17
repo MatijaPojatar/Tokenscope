@@ -91,8 +91,27 @@ export class SessionWatcher {
 
   stop() {
     clearInterval(this.rescanTimer);
-    for (const t of this.tailers.values()) t.stop();
+    for (const t of this.tailers.values()) if (t) t.stop();
     this.tailers.clear();
+  }
+
+  async track(filePath, sessionId, agentId, cutoff) {
+    if (this.tailers.has(filePath)) return;
+    this.tailers.set(filePath, null); // reserve before awaiting so overlapping scans can't double-tail
+    let stat;
+    try {
+      stat = await fsp.stat(filePath);
+    } catch {
+      this.tailers.delete(filePath);
+      return;
+    }
+    if (stat.mtimeMs < cutoff) {
+      this.tailers.delete(filePath); // re-check next scan — old sessions can resume
+      return;
+    }
+    const tailer = new Tailer(filePath, (evt) => this.onEvent(sessionId, evt, agentId));
+    this.tailers.set(filePath, tailer);
+    tailer.start();
   }
 
   async scan() {
@@ -113,21 +132,24 @@ export class SessionWatcher {
         continue;
       }
       for (const f of files) {
-        // Subagent transcripts live in per-session subdirectories — phase 3.
-        if (!f.isFile() || !f.name.endsWith('.jsonl')) continue;
-        const filePath = path.join(dirPath, f.name);
-        if (this.tailers.has(filePath)) continue;
-        let stat;
-        try {
-          stat = await fsp.stat(filePath);
-        } catch {
-          continue;
+        if (f.isFile() && f.name.endsWith('.jsonl')) {
+          const sessionId = f.name.slice(0, -'.jsonl'.length);
+          this.track(path.join(dirPath, f.name), sessionId, null, cutoff);
+        } else if (f.isDirectory()) {
+          // Subagent transcripts: <project>\<sessionId>\subagents\agent-*.jsonl
+          const subDir = path.join(dirPath, f.name, 'subagents');
+          let agentFiles = [];
+          try {
+            agentFiles = await fsp.readdir(subDir, { withFileTypes: true });
+          } catch {
+            continue; // session dir without subagents
+          }
+          for (const af of agentFiles) {
+            if (!af.isFile() || !af.name.endsWith('.jsonl')) continue;
+            const agentId = af.name.slice(0, -'.jsonl'.length);
+            this.track(path.join(subDir, af.name), f.name, agentId, cutoff);
+          }
         }
-        if (stat.mtimeMs < cutoff) continue;
-        const sessionId = f.name.slice(0, -'.jsonl'.length);
-        const tailer = new Tailer(filePath, (evt) => this.onEvent(sessionId, evt));
-        this.tailers.set(filePath, tailer);
-        tailer.start();
       }
     }
   }

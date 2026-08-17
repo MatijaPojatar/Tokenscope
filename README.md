@@ -14,6 +14,14 @@ It runs as a local web page next to your terminal and shows, for every session:
 - **Docs leaderboard** — which `.md` files (including auto-injected CLAUDE.md)
   were read, how often, and what they cost — so you can see whether Claude
   finds the right docs and what that search costs.
+- **Agents** — subagents spawned by a session, each with its own context
+  window: tokens used, calls made, docs read (their docs reads join the
+  leaderboard, marked `A`).
+- **Docs across sessions** — the `docs` button shows every doc read by any
+  session or agent in the loaded window: reads, tokens, session count. The
+  fastest way to spot docs that never get read.
+- **Cost & rate limits** — session USD cost and account rate-limit fill, fed
+  by the statusline integration below.
 
 Zero dependencies. Node 18+.
 
@@ -46,15 +54,35 @@ Optionally, Claude Code hooks can POST real-time events to `/event` for
 instant "action happening now" signals (see `hooks/settings-snippet.json`).
 Tokenscope works without them — hooks only reduce latency.
 
+## Optional integrations
+
+**Statusline** (recommended): session cost, exact context-window size, and
+rate limits — plus a useful status line in the terminal itself:
+
+```json
+"statusLine": {
+  "type": "command",
+  "command": "node <path-to-tokenscope>/statusline/statusline.js"
+}
+```
+
+**OpenTelemetry** (exact per-request USD cost): add to `env` in settings.json —
+`CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_LOGS_EXPORTER=otlp`,
+`OTEL_EXPORTER_OTLP_PROTOCOL=http/json`,
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4820/otel`. Only enable while
+the collector runs; the exporter logs warnings when its endpoint is down.
+
 ## Layout
 
 ```
-src/server.js       HTTP + SSE + static + hook ingest
-src/watcher.js      session discovery + transcript tailing
-src/adapter.js      transcript JSONL parsing — the ONLY format-aware module
-src/attribution.js  usage-delta attribution engine
-src/store.js        session store + SSE broadcast
-public/             the visualizer UI
+src/server.js            HTTP + SSE + static + hook/status/OTel ingest
+src/watcher.js           session + subagent discovery, transcript tailing
+src/adapter.js           transcript JSONL parsing — the ONLY format-aware module
+src/attribution.js       usage-delta attribution engine (sessions + agents)
+src/store.js             session store + SSE broadcast + docs report
+src/otel.js              minimal OTLP/HTTP JSON logs parser
+statusline/statusline.js Claude Code statusline: prints a line, feeds the collector
+public/                  the visualizer UI
 ```
 
 The transcript format is internal to Claude Code and can change between

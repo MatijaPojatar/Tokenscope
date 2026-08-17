@@ -1,5 +1,7 @@
 {
   "//": "Optional: merge into %USERPROFILE%\\.claude\\settings.json for real-time hook events. Tokenscope works without this — hooks only reduce latency. curl ships with Windows 10/11.",
+  "// statusline": "For cost, exact window size, and rate limits, also add: \"statusLine\": { \"type\": \"command\", \"command\": \"node <path-to-tokenscope>/statusline/statusline.js\" }",
+  "// otel": "For exact per-request USD cost (optional; only enable while the collector runs, the exporter warns when the endpoint is down), add to \"env\": CLAUDE_CODE_ENABLE_TELEMETRY=1, OTEL_LOGS_EXPORTER=otlp, OTEL_EXPORTER_OTLP_PROTOCOL=http/json, OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4820/otel",
   "hooks": {
     "SessionStart": [
       { "hooks": [{ "type": "command", "async": true, "command": "curl -s -m 2 --connect-timeout 1 -X POST http://localhost:4820/event -H \"Content-Type: application/json\" -d @-" }] }

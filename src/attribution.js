@@ -20,10 +20,15 @@ function shortPath(p) {
   return parts.slice(-3).join('\\');
 }
 
+// Harness-internal files (transcript spill files, scratchpads) read back by
+// Claude are not the user's documentation — keep them out of docs stats.
+const HARNESS_PATH = /[\\/](\.claude|tool-results)[\\/]|[\\/]Temp[\\/]claude[\\/]/i;
+const isDocPath = (fp) => /\.(md|mdx|rst)$/i.test(fp) && !HARNESS_PATH.test(fp);
+
 function classifyTool(name, input) {
   if (name === 'Read') {
     const fp = (input && input.file_path) || '';
-    return /\.(md|mdx|txt|rst)$/i.test(fp) ? 'docsRead' : 'codeRead';
+    return isDocPath(fp) ? 'docsRead' : 'codeRead';
   }
   if (name === 'Glob' || name === 'Grep') return 'search';
   if (name === 'Task' || name === 'Agent') return 'agent';
@@ -41,7 +46,10 @@ function toolLabel(name, input) {
 }
 
 export class SessionModel {
-  constructor(id) {
+  constructor(id, opts = {}) {
+    // Subagent transcripts flag every entry isSidechain — an agent model
+    // ignores the flag and treats its own transcript as the main lane.
+    this.ignoreSidechain = !!opts.ignoreSidechain;
     this.id = id;
     this.title = null;
     this.cwd = null;
@@ -63,6 +71,10 @@ export class SessionModel {
     this.seenApi = new Set();
     this.prevOutput = 0; // last call's output tokens — re-enter cache next call
     this.maxContext = 0;
+    this.agents = new Map(); // agentId -> SessionModel (own context window)
+    this.costUsd = null; // authoritative session cost from the statusline feed
+    this.exactCostUsd = 0; // accumulated from OTel api_request events
+    this.windowExact = null; // exact window size from the statusline feed
   }
 
   currentTurn() {
@@ -82,7 +94,7 @@ export class SessionModel {
         return;
 
       case 'prompt': {
-        if (evt.isSidechain) return;
+        if (evt.isSidechain && !this.ignoreSidechain) return;
         if (evt.cwd) this.cwd = evt.cwd;
         this.turns.push({
           prompt: evt.text.slice(0, 240),
@@ -97,7 +109,7 @@ export class SessionModel {
       }
 
       case 'tool_results': {
-        if (evt.isSidechain) return;
+        if (evt.isSidechain && !this.ignoreSidechain) return;
         const turn = this.currentTurn();
         for (const r of evt.results) {
           const tu = this.toolUses.get(r.toolUseId);
@@ -148,7 +160,7 @@ export class SessionModel {
       }
 
       case 'api': {
-        if (evt.isSidechain) {
+        if (evt.isSidechain && !this.ignoreSidechain) {
           if (!this.seenApi.has(evt.apiId)) {
             this.seenApi.add(evt.apiId);
             const u = evt.usage;
@@ -231,6 +243,52 @@ export class SessionModel {
     this.window = this.maxContext > 210000 ? 1000000 : DEFAULT_WINDOW;
   }
 
+  // Route one event from a subagent transcript to that agent's own model.
+  // Agents run in their own context window, so their tokens never touch the
+  // parent's gauge — but their docs reads join the parent's leaderboard.
+  agentEvent(agentId, evt) {
+    let a = this.agents.get(agentId);
+    if (!a) {
+      a = new SessionModel(agentId, { ignoreSidechain: true });
+      this.agents.set(agentId, a);
+    }
+    if (!a.title && evt.kind === 'prompt') a.title = evt.text.slice(0, 100);
+    a.addEvent(evt);
+    if (evt.timestamp) this.lastActivity = evt.timestamp;
+  }
+
+  // Statusline feed: authoritative cost and exact context-window size.
+  applyStatus(s) {
+    const cw = s.context_window || {};
+    if (typeof cw.context_window_size === 'number' && cw.context_window_size > 0) {
+      this.windowExact = cw.context_window_size;
+    }
+    if (s.cost && typeof s.cost.total_cost_usd === 'number') {
+      this.costUsd = s.cost.total_cost_usd;
+    }
+  }
+
+  applyOtel(e) {
+    if (e.costUsd > 0) this.exactCostUsd += e.costUsd;
+  }
+
+  // Session docs + docs read by this session's agents, summed per path.
+  mergedDocs() {
+    const map = new Map();
+    const add = (d, viaAgent) => {
+      const cur = map.get(d.path) || { path: d.path, reads: 0, tokens: 0, agent: false };
+      cur.reads += d.reads;
+      cur.tokens += d.tokens;
+      if (viaAgent) cur.agent = true;
+      map.set(d.path, cur);
+    };
+    for (const d of this.docs.values()) add(d, false);
+    for (const a of this.agents.values()) {
+      for (const d of a.docs.values()) add(d, true);
+    }
+    return [...map.values()].sort((x, y) => y.tokens - x.tokens);
+  }
+
   credit(p, tokens) {
     this.context[p.cat] = (this.context[p.cat] || 0) + tokens;
     if (p.action) p.action.tokens += tokens;
@@ -247,13 +305,23 @@ export class SessionModel {
       cwd: this.cwd,
       model: this.model,
       lastActivity: this.lastActivity,
-      window: this.window,
+      window: this.windowExact || this.window,
       contextNow: this.contextNow,
       context: this.context,
       totals: this.totals,
       sidechain: this.sidechain,
+      costUsd: this.costUsd ?? (this.exactCostUsd > 0 ? this.exactCostUsd : null),
       turns: this.turns.slice(-60),
-      docs: [...this.docs.values()].sort((a, b) => b.tokens - a.tokens).slice(0, 30),
+      docs: this.mergedDocs().slice(0, 30),
+      agents: [...this.agents.values()].map((a) => ({
+        id: a.id,
+        title: a.title,
+        model: a.model,
+        calls: a.totals.calls,
+        tokens: a.totals.fresh + a.totals.output,
+        contextNow: a.contextNow,
+        docsReads: [...a.docs.values()].reduce((n, d) => n + d.reads, 0),
+      })),
     };
   }
 }
