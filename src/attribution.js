@@ -83,6 +83,7 @@ export class SessionModel {
     this.title = null;
     this.cwd = null;
     this.model = null;
+    this.firstActivity = null;
     this.lastActivity = null;
     this.window = DEFAULT_WINDOW;
     this.contextNow = 0;
@@ -130,7 +131,10 @@ export class SessionModel {
 
   addEvent(evt) {
     if (!evt) return;
-    if (evt.timestamp) this.lastActivity = evt.timestamp;
+    if (evt.timestamp) {
+      if (!this.firstActivity) this.firstActivity = evt.timestamp;
+      this.lastActivity = evt.timestamp;
+    }
 
     switch (evt.kind) {
       case 'title':
@@ -533,6 +537,35 @@ export class SessionModel {
     if (!a.title && evt.kind === 'prompt') a.title = evt.text.slice(0, 100);
     a.addEvent(evt);
     if (evt.timestamp) this.lastActivity = evt.timestamp;
+  }
+
+  // Compact per-session summary for the persistent rollup file — the
+  // record that survives after the session leaves the live window.
+  rollupSummary() {
+    const ob = this.outputBreakdown();
+    let agentTokens = 0;
+    for (const a of this.agents.values()) agentTokens += a.totals.fresh + a.totals.output;
+    return {
+      v: 1,
+      id: this.id,
+      cwd: this.cwd,
+      model: this.model,
+      started: this.firstActivity,
+      last: this.lastActivity,
+      calls: this.totals.calls,
+      fresh: this.totals.fresh,
+      output: this.totals.output,
+      base: this.context.base,
+      maxContext: this.maxContext,
+      window: this.windowExact || this.window,
+      costUsd: this.costUsd ?? (this.exactCostUsd > 0 ? this.exactCostUsd : null),
+      compactions: this.compactions.length,
+      agents: this.agents.size,
+      agentTokens,
+      thinking: ob ? ob.thinking : 0,
+      text: ob ? ob.text : 0,
+      toolUse: ob ? ob.toolUse : 0,
+    };
   }
 
   // Output tokens spent issuing one tool call: its payload estimate plus an

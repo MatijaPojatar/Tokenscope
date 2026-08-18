@@ -3,6 +3,20 @@
 Notable changes to Tokenscope. Format follows [Keep a Changelog](https://keepachangelog.com);
 versions follow [SemVer](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- **Rollup history & trends.** Compact per-session summaries (tokens,
+  cost, base size, model, compactions, agent burn, output split) are
+  appended to `~\.tokenscope\rollups.jsonl` — latest snapshot per session
+  wins, the file is compacted on boot, and history accrues from install
+  on, outliving the live tail window. A `trends` button opens the new
+  page: tokens/cost per day (stacked input/output columns), average base
+  context per session over time, and per-project / per-model totals —
+  hand-rolled charts, still zero dependencies. `--data <dir>` overrides
+  the rollup location.
+
 ## [0.3.0] — 2026-08-18
 
 ### Added

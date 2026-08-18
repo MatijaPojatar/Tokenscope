@@ -12,10 +12,11 @@
     <aside id="sidebar">
       <div class="brand-row">
         <div class="brand">tokenscope</div>
-        <div class="brand-btns">
-          <button id="mcp-btn" title="MCP &amp; skills across all sessions">mcp</button>
-          <button id="docs-btn" title="Docs across all sessions">docs</button>
-        </div>
+      </div>
+      <div class="brand-btns">
+        <button id="trends-btn" title="Usage trends across days, projects, and models">trends</button>
+        <button id="mcp-btn" title="MCP &amp; skills across all sessions">mcp</button>
+        <button id="docs-btn" title="Docs across all sessions">docs</button>
       </div>
       <div id="session-list"></div>
     </aside>
@@ -94,6 +95,13 @@
           <span class="mono report-sub">every server call and skill use by any session or agent in the loaded window</span>
         </header>
         <div id="mcp-report-rows"></div>
+      </div>
+      <div id="trends-report" class="report" hidden>
+        <header class="report-head">
+          <h1>Trends</h1>
+          <span class="mono report-sub">rolled-up session history — accrues from install on and outlives the live window</span>
+        </header>
+        <div id="trends-rows"></div>
       </div>
     </main>
   </div>

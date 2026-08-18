@@ -19,12 +19,14 @@ const state = {
   detail: {},      // id -> full session model
   selected: null,
   pinned: false,   // user clicked a session; stop auto-following
-  view: 'session', // 'session' | 'docs' | 'mcp' (cross-session reports)
+  view: 'session', // 'session' | 'docs' | 'mcp' | 'trends' (cross-session reports)
   rateLimits: null,
   report: { read: [], unused: [] },
   reportFetched: 0,
   mcpReport: null,
   mcpReportFetched: 0,
+  trends: null,
+  trendsFetched: 0,
   turnToggles: {}, // turn key -> expanded override (survives live re-renders)
   agentToggles: {}, // agent key -> expanded
   highlight: null, // {kind, subject} from a clicked Optimize entry
@@ -1007,6 +1009,126 @@ async function fetchReport(force) {
   } catch { /* collector restarting */ }
 }
 
+function renderTrends() {
+  const box = $('trends-rows');
+  box.replaceChildren();
+  const h = state.trends;
+  if (!h) {
+    box.append(el('div', 'ds', 'loading…'));
+    return;
+  }
+  if (!h.days || h.days.length === 0) {
+    box.append(el('div', 'ds', 'no history yet — rollups accrue as sessions run'));
+    return;
+  }
+  const group = (label, v) => {
+    const g = el('div', 'base-group');
+    g.append(el('span', null, label), el('b', null, v || ''));
+    box.append(g);
+  };
+  const legend = (pairs) => {
+    const l = el('div', 'trend-legend');
+    for (const [cls, label] of pairs) {
+      const sp = el('span');
+      sp.append(el('i', 'swatch ' + cls), document.createTextNode(label));
+      l.append(sp);
+    }
+    box.append(l);
+  };
+  const xLabels = (days) => {
+    const lab = el('div', 'trend-labels');
+    lab.append(el('span', null, days[0].date.slice(5)),
+      el('span', null, days[days.length - 1].date.slice(5)));
+    box.append(lab);
+  };
+  const chart = (days, maxVal, colFn, small) => {
+    const c = el('div', 'trend-chart' + (small ? ' small' : ''));
+    for (const d of days) {
+      const col = el('div', 'tc-col');
+      colFn(d, col, maxVal);
+      c.append(col);
+    }
+    box.append(c);
+  };
+  const plural = (n) => `${n} session${n === 1 ? '' : 's'}`;
+
+  // tokens per day, input under output
+  const totalCost = h.days.reduce((n, d) => n + d.costUsd, 0);
+  group('tokens per day', `${h.totalSessions} sessions` +
+    (totalCost > 0 ? ` · $${totalCost.toFixed(2)}` : ''));
+  const maxDay = Math.max(...h.days.map((d) => d.fresh + d.output), 1);
+  chart(h.days, maxDay, (d, col, max) => {
+    const seg = (v, cls) => {
+      const sp = el('div', 'tc-seg ' + cls);
+      sp.style.height = ((v / max) * 100) + '%';
+      return sp;
+    };
+    if (d.output > 0) col.append(seg(d.output, 'tc-out'));
+    if (d.fresh > 0) col.append(seg(d.fresh, 'tc-in'));
+    col.title = `${d.date} — ${plural(d.sessions)} · in ${fmtTok(d.fresh)} · out ${fmtTok(d.output)}` +
+      (d.costUsd > 0 ? ` · $${d.costUsd.toFixed(2)}${d.costSessions < d.sessions ? ` (${d.costSessions} of ${d.sessions})` : ''}` : '') +
+      (d.compactions ? ` · ⟲${d.compactions}` : '');
+  });
+  legend([['tc-in', 'input (fresh)'], ['tc-out', 'output']]);
+  xLabels(h.days);
+
+  // base context per session per day — is the standing cost growing?
+  const baseDays = h.days.filter((d) => d.baseAvg > 0);
+  if (baseDays.length >= 2) {
+    group('base context per session',
+      `~${fmtTok(baseDays[0].baseAvg)} → ~${fmtTok(baseDays[baseDays.length - 1].baseAvg)}`);
+    const maxBase = Math.max(...h.days.map((d) => d.baseAvg), 1);
+    chart(h.days, maxBase, (d, col, max) => {
+      if (d.baseAvg > 0) {
+        const sp = el('div', 'tc-seg tc-base');
+        sp.style.height = ((d.baseAvg / max) * 100) + '%';
+        col.append(sp);
+      }
+      col.title = d.baseAvg > 0 ? `${d.date} — base ~${fmtTok(d.baseAvg)}/session` : d.date;
+    }, true);
+    xLabels(h.days);
+  }
+
+  // projects and models
+  const barList = (items, name, meta, title) => {
+    const max = Math.max(...items.map((x) => x.fresh + x.output), 1);
+    for (const x of items) {
+      const r = el('div', 'trend-row');
+      const nm = el('span', 'dp', name(x));
+      if (title) nm.title = title(x);
+      const bar = el('span', 'tb');
+      const fill = document.createElement('div');
+      fill.style.width = Math.max(2, ((x.fresh + x.output) / max) * 100) + '%';
+      bar.append(fill);
+      r.append(nm, bar, el('span', 'tm', meta(x)));
+      box.append(r);
+    }
+  };
+  group('projects', String(h.projects.length));
+  barList(h.projects,
+    (p) => p.cwd.replace(/\//g, '\\').split('\\').slice(-2).join('\\'),
+    (p) => `${fmtTok(p.fresh + p.output)} · ${plural(p.sessions)}` +
+      (p.costUsd > 0 ? ` · $${p.costUsd.toFixed(2)}` : ''),
+    (p) => p.cwd);
+  group('models', String(h.models.length));
+  barList(h.models,
+    (m) => m.model,
+    (m) => `${fmtTok(m.fresh + m.output)} · ${plural(m.sessions)}` +
+      (m.costUsd > 0 ? ` · $${m.costUsd.toFixed(2)}` : ''));
+}
+
+async function fetchTrends(force) {
+  if (!force && Date.now() - state.trendsFetched < 15000) return;
+  state.trendsFetched = Date.now();
+  try {
+    const res = await fetch('/api/history');
+    if (res.ok) {
+      state.trends = await res.json();
+      if (state.view === 'trends') renderTrends();
+    }
+  } catch { /* collector restarting */ }
+}
+
 async function fetchMcpReport(force) {
   if (!force && Date.now() - state.mcpReportFetched < 5000) return;
   state.mcpReportFetched = Date.now();
@@ -1026,13 +1148,16 @@ function render() {
   renderList();
   $('docs-btn').classList.toggle('active', state.view === 'docs');
   $('mcp-btn').classList.toggle('active', state.view === 'mcp');
+  $('trends-btn').classList.toggle('active', state.view === 'trends');
   $('report').hidden = state.view !== 'docs';
   $('mcp-report').hidden = state.view !== 'mcp';
-  if (state.view === 'docs' || state.view === 'mcp') {
+  $('trends-report').hidden = state.view !== 'trends';
+  if (state.view !== 'session') {
     $('empty').hidden = true;
     $('detail').hidden = true;
     if (state.view === 'docs') renderReport();
-    else renderMcpReport();
+    else if (state.view === 'mcp') renderMcpReport();
+    else renderTrends();
   } else {
     renderDetail();
   }
@@ -1054,6 +1179,13 @@ $('mcp-btn').onclick = () => {
   $('mcp-btn').blur();
 };
 
+$('trends-btn').onclick = () => {
+  state.view = state.view === 'trends' ? 'session' : 'trends';
+  if (state.view === 'trends') fetchTrends(true);
+  render();
+  $('trends-btn').blur();
+};
+
 // ---- SSE ----
 
 let hookFade;
@@ -1068,6 +1200,7 @@ es.onmessage = (msg) => {
     }
     if (state.view === 'docs') fetchReport(false);
     if (state.view === 'mcp') fetchMcpReport(false);
+    if (state.view === 'trends') fetchTrends(false);
     render();
   } else if (data.type === 'session') {
     state.detail[data.session.id] = data.session;

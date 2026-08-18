@@ -3,6 +3,7 @@
 // over SSE, ingests optional hook events, and tails Claude Code transcripts.
 //
 //   node src/server.js [--port 4820] [--root <projects dir>] [--hours 48]
+//                      [--data <rollup dir>]
 
 import http from 'node:http';
 import fsp from 'node:fs/promises';
@@ -12,6 +13,7 @@ import { Store } from './store.js';
 import { SessionWatcher, defaultRoot } from './watcher.js';
 import { extractApiRequests } from './otel.js';
 import { scanBaseContext, scanMcpConfig } from './basescan.js';
+import { RollupStore, defaultDataDir } from './rollup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -24,6 +26,8 @@ const argOf = (flag, fallback) => {
 const PORT = Number(argOf('--port', 4820));
 const ROOT = argOf('--root', defaultRoot());
 const HOURS = Number(argOf('--hours', 48));
+const DATA = argOf('--data', defaultDataDir());
+const ROLLUP_MS = 60000;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -41,6 +45,19 @@ store.onBaseScan = async (s) => {
   } catch { /* scan failed — panel shows totals only */ }
 };
 const watcher = new SessionWatcher(ROOT, (id, evt, agentId) => store.ingest(id, evt, agentId), HOURS);
+
+// Persistent rollups: session summaries appended to <data>/rollups.jsonl so
+// trends outlive the live tail window.
+await fsp.mkdir(DATA, { recursive: true });
+const rollups = new RollupStore(path.join(DATA, 'rollups.jsonl'));
+await rollups.load();
+const rollupTick = () => {
+  for (const s of store.sessions.values()) {
+    if (s.lastActivity) rollups.record(s.rollupSummary());
+  }
+};
+setInterval(rollupTick, ROLLUP_MS);
+setTimeout(rollupTick, 15000); // seed shortly after the boot backfill settles
 
 async function serveStatic(res, urlPath) {
   const rel = urlPath === '/' ? 'index.html' : urlPath.slice(1);
@@ -96,6 +113,13 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/mcpskills') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(store.mcpSkillsReport()));
+    return;
+  }
+
+  if (url.pathname === '/api/history') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(rollups.history(
+      [...store.sessions.values()].map((s) => s.rollupSummary()))));
     return;
   }
 

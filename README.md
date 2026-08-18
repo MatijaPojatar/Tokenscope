@@ -68,6 +68,12 @@ It runs as a local web page next to your terminal and shows, for every session:
   its payload plus an even share of its API message's thinking.
 - **Cost & rate limits** — session USD cost and account rate-limit fill, fed
   by the statusline integration below.
+- **Trends** — the `trends` button charts rolled-up history: tokens and
+  cost per day, per-project and per-model totals, and average base context
+  per session over time. Compact session summaries are appended to
+  `~\.tokenscope\rollups.jsonl` (latest snapshot per session wins), so
+  history accrues from install on and outlives the live session window —
+  still zero dependencies.
 
 Zero dependencies. Node 18+.
 
@@ -120,7 +126,7 @@ automatically; new activity streams in live.
 Options:
 
 ```
-node src/server.js --port 4820 --hours 48 --root %USERPROFILE%\.claude\projects
+node src/server.js --port 4820 --hours 48 --root %USERPROFILE%\.claude\projects --data %USERPROFILE%\.tokenscope
 ```
 
 ## How it works
@@ -170,6 +176,7 @@ src/adapter.js           transcript JSONL parsing — the ONLY format-aware modu
 src/attribution.js       usage-delta attribution engine, suggestions (sessions + agents)
 src/basescan.js          base-context disk scan, follows CLAUDE.md @-imports
 src/store.js             session store + SSE broadcast + cross-session docs report
+src/rollup.js            persistent session rollups + trends aggregation
 src/otel.js              minimal OTLP/HTTP JSON logs parser
 statusline/statusline.js Claude Code statusline: prints a line, feeds the collector
 public/                  the visualizer UI

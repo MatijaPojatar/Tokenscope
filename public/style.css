@@ -64,7 +64,7 @@ body {
 }
 .brand-row {
   display: flex; align-items: baseline; justify-content: space-between;
-  padding: 0.2rem 0.5rem 0.9rem;
+  padding: 0.2rem 0.5rem 0.5rem;
 }
 .brand {
   font-family: var(--mono);
@@ -73,12 +73,16 @@ body {
   letter-spacing: 0.06em;
   color: var(--accent);
 }
-.brand-btns { display: flex; gap: 0.3rem; }
+.brand-btns {
+  display: flex; gap: 0.3rem;
+  padding: 0 0.5rem 0.9rem;
+}
 .brand-btns button {
+  flex: 1;
   font-family: var(--mono); font-size: 0.66rem;
   background: var(--panel-2); color: var(--muted);
   border: 1px solid var(--line); border-radius: 6px;
-  padding: 0.2rem 0.55rem; cursor: pointer;
+  padding: 0.24rem 0.55rem; cursor: pointer;
 }
 .brand-btns button:hover { color: var(--ink); }
 .brand-btns button.active { color: var(--accent); border-color: var(--accent); }
@@ -342,6 +346,46 @@ h2 {
 .report-head h1 { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; margin: 0 0 0.2rem; }
 .report-sub { font-size: 0.7rem; color: var(--muted); }
 .report-row { padding: 0.42rem 0; }
+
+/* ---- trends charts ---- */
+.trend-chart {
+  display: flex; align-items: flex-end; gap: 2px;
+  height: 110px; margin: 0.55rem 0 0.2rem;
+}
+.trend-chart.small { height: 56px; }
+.tc-col {
+  flex: 1 1 0; min-width: 3px; height: 100%;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  border-radius: 2px 2px 0 0; overflow: hidden;
+}
+.tc-col:hover { background: var(--panel); }
+.tc-seg { width: 100%; min-height: 1px; }
+.tc-in { background: var(--c-base); }
+.tc-out { background: var(--c-output); }
+.tc-base { background: var(--c-conversation); }
+.swatch.tc-in { background: var(--c-base); }
+.swatch.tc-out { background: var(--c-output); }
+.trend-legend {
+  display: flex; gap: 0.95rem;
+  font-family: var(--mono); font-size: 0.64rem; color: var(--muted);
+  margin-top: 0.35rem;
+}
+.trend-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+.trend-labels {
+  display: flex; justify-content: space-between;
+  font-family: var(--mono); font-size: 0.62rem; color: var(--muted);
+  margin: 0.15rem 0 0.9rem;
+}
+.trend-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 8rem auto;
+  gap: 0.8rem; align-items: center;
+  font-family: var(--mono); font-size: 0.72rem;
+  padding: 0.28rem 0; border-bottom: 1px dashed var(--line);
+}
+.trend-row .dp { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trend-row .tb { background: var(--panel-2); border-radius: 3px; height: 9px; }
+.trend-row .tb div { height: 100%; border-radius: 3px; background: var(--accent); }
+.trend-row .tm { color: var(--muted); white-space: nowrap; }
 
 .totals { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
 .totals div { display: flex; justify-content: space-between; padding: 0.22rem 0; border-bottom: 1px dashed var(--line); }
