@@ -3,7 +3,7 @@
 Notable changes to Tokenscope. Format follows [Keep a Changelog](https://keepachangelog.com);
 versions follow [SemVer](https://semver.org).
 
-## [Unreleased]
+## [0.6.0] — 2026-08-18
 
 ### Added
 
@@ -24,6 +24,22 @@ versions follow [SemVer](https://semver.org).
   saved as `.claude\context\optimize-plan-<id>-<stamp>.md`. Shares the
   one-at-a-time/cancel machinery. Endpoints: `POST` / `DELETE
   /api/session/:id/optimize-plan`.
+
+### Changed
+
+- Action labels and turn prompts now wrap to multiple lines instead of
+  truncating with an ellipsis — collapsed turns keep a compact one-line
+  header, expanding reveals the full prompt. Capture caps raised to
+  match: commands and agent prompts to 2000 chars (was 200/120), turn
+  prompts to 2000 (was 240), Grep patterns to 400, agent descriptions
+  to 300.
+- The live action feed (real-time hook events) moved from the meta line
+  into the title row, next to the session name and live dot.
+- Slim theme-matched scrollbars everywhere (floating pill thumb;
+  Firefox fallback via `scrollbar-color`).
+- The sidebar header (brand + tab row) no longer scrolls — only the
+  session list does — and the drawer's right padding widened so the
+  list's scrollbar stays hidden while the drawer is collapsed.
 
 ## [0.5.0] — 2026-08-18
 
@@ -199,6 +215,7 @@ Initial release.
 - Claude Code plugin packaging: marketplace manifest, SessionStart
   auto-boot hook, real-time event hooks, `/tokenscope:dashboard` skill.
 
+[0.6.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.6.0
 [0.5.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.5.0
 [0.4.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.4.0
 [0.3.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.3.0
