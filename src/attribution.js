@@ -77,10 +77,10 @@ function clip(s, n) {
 function toolLabel(name, input, cwd) {
   if (!input) return name;
   if (input.file_path) return `${name} ${displayPath(input.file_path, cwd)}`;
-  if (input.pattern) return `${name} "${clip(input.pattern, 80)}"`;
-  if (input.command) return `${name} ${clip(input.command, 200)}`;
-  if (input.description) return `${name} ${clip(input.description, 120)}`;
-  if (input.prompt) return `${name} ${clip(input.prompt, 120)}`;
+  if (input.pattern) return `${name} "${clip(input.pattern, 400)}"`;
+  if (input.command) return `${name} ${clip(input.command, 2000)}`;
+  if (input.description) return `${name} ${clip(input.description, 300)}`;
+  if (input.prompt) return `${name} ${clip(input.prompt, 2000)}`;
   return name;
 }
 
@@ -158,7 +158,7 @@ export class SessionModel {
         if (evt.isSidechain && !this.ignoreSidechain) return;
         if (evt.cwd) this.cwd = evt.cwd;
         this.turns.push({
-          prompt: evt.text.slice(0, 240),
+          prompt: evt.text.slice(0, 2000),
           ts: evt.timestamp,
           actions: [],
           fresh: 0,
@@ -619,6 +619,47 @@ export class SessionModel {
       out.recacheUsd = usd(this.context.recache, price, recacheMult - CACHE_READ_MULT);
     }
     return out;
+  }
+
+  // Plain-text digest of the whole session — the input handed to the
+  // local claude CLI when generating a handoff context file.
+  contextDigest() {
+    const L = [];
+    L.push(`# Session digest: ${this.title || this.id}`);
+    L.push(`project: ${this.cwd || 'unknown'}`);
+    L.push(`model: ${this.model || 'unknown'} · started ${this.firstActivity || '?'} · last activity ${this.lastActivity || '?'}`);
+    L.push(`totals: ${this.totals.calls} API calls · ${this.totals.fresh} fresh input tokens · ${this.totals.output} output tokens`);
+    if (this.compactions.length > 0) {
+      L.push(`compactions: ${this.compactions.length} — history before each survives only in its summary turn below`);
+    }
+    L.push('', '## Conversation (chronological; prompts truncated to 240 chars)');
+    for (const t of this.turns) {
+      if (!t.prompt || t.prompt === '(session start)') continue;
+      L.push(`- ${t.ts ? t.ts + ' ' : ''}${t.compactSummary ? '[COMPACTION SUMMARY] ' : 'USER: '}${t.prompt}`);
+      const top = [...t.actions].sort((a, b) => b.tokens - a.tokens).slice(0, 5);
+      for (const a of top) L.push(`    · ${a.label.slice(0, 140)} (${a.tokens} tok)`);
+    }
+    const edited = new Set(this.editedFiles);
+    for (const a of this.agents.values()) for (const p of a.editedFiles) edited.add(p);
+    if (edited.size > 0) {
+      L.push('', '## Files edited');
+      for (const p of edited) L.push(`- ${p}`);
+    }
+    const reads = this.mergedFileReads().sort((a, b) => b.tokens - a.tokens).slice(0, 25);
+    if (reads.length > 0) {
+      L.push('', '## Files read most');
+      for (const f of reads) L.push(`- ${f.path} (${f.tokens} tok · ${f.reads} reads)`);
+    }
+    const docs = this.mergedDocs().slice(0, 15);
+    if (docs.length > 0) {
+      L.push('', '## Docs used');
+      for (const d of docs) L.push(`- ${d.path} (${d.reads} reads)`);
+    }
+    if (this.agents.size > 0) {
+      L.push('', '## Subagents spawned');
+      for (const a of this.agents.values()) L.push(`- ${(a.title || a.id).slice(0, 160)}`);
+    }
+    return L.join('\n');
   }
 
   // Compact per-session summary for the persistent rollup file — the

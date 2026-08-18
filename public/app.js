@@ -31,6 +31,7 @@ const state = {
   fileMapFetched: 0,
   mapProject: null, // selected project cwd on the map page
   scrub: null, // {id, i} — session + timeline index while time-scrubbing the gauge
+  ctxGen: {}, // session id -> {running, msg} — context-file generation status
   turnToggles: {}, // turn key -> expanded override (survives live re-renders)
   agentToggles: {}, // agent key -> expanded
   highlight: null, // {kind, subject} from a clicked Optimize entry
@@ -481,6 +482,7 @@ function renderDetail() {
     : '';
   const active = s.lastActivity && Date.now() - new Date(s.lastActivity).getTime() < 120000;
   $('live-dot').className = 'dot' + (active ? ' on' : '');
+  renderCtxStatus();
 
   renderGauge(s);
   renderScrubber(s);
@@ -1848,6 +1850,43 @@ function render() {
     renderDetail();
   }
 }
+
+// ---- context-file generation (runs the user's local claude CLI) ----
+
+function renderCtxStatus() {
+  const g = state.ctxGen[state.selected];
+  $('ctx-status').textContent = g ? g.msg : '';
+  $('ctx-btn').disabled = !!(g && g.running);
+  $('ctx-cancel-btn').hidden = !(g && g.running);
+}
+
+$('ctx-btn').onclick = async () => {
+  const id = state.selected;
+  if (!id || (state.ctxGen[id] && state.ctxGen[id].running)) return;
+  state.ctxGen[id] = { running: true, msg: 'generating via local claude CLI — can take a minute…' };
+  renderCtxStatus();
+  try {
+    const res = await fetch(`/api/session/${id}/context-file`, { method: 'POST' });
+    const j = await res.json();
+    state.ctxGen[id] = {
+      running: false,
+      msg: j.ok ? `saved → ${j.path}` : j.canceled ? 'canceled' : `failed: ${j.error}`,
+    };
+  } catch {
+    state.ctxGen[id] = { running: false, msg: 'failed: collector unreachable' };
+  }
+  renderCtxStatus();
+};
+
+$('ctx-cancel-btn').onclick = () => {
+  const id = state.selected;
+  if (!id || !(state.ctxGen[id] && state.ctxGen[id].running)) return;
+  $('ctx-cancel-btn').disabled = true;
+  // the pending POST resolves with {canceled:true} and updates the status
+  fetch(`/api/session/${id}/context-file`, { method: 'DELETE' })
+    .catch(() => {})
+    .finally(() => { $('ctx-cancel-btn').disabled = false; });
+};
 
 // Keep the drawer hover-driven after report-button clicks: a focused button
 // would hold it open (:focus-within) over the content the click revealed.

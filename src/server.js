@@ -6,8 +6,10 @@
 //                      [--data <rollup dir>]
 
 import http from 'node:http';
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { Store } from './store.js';
 import { SessionWatcher, defaultRoot } from './watcher.js';
@@ -58,6 +60,82 @@ const rollupTick = () => {
 };
 setInterval(rollupTick, ROLLUP_MS);
 setTimeout(rollupTick, 15000); // seed shortly after the boot backfill settles
+
+// Generate a handoff context file for a session: pipe the session digest
+// to the locally installed claude CLI (headless `claude -p`, billed to the
+// user's own account) and write its answer under <project>\.claude\context.
+const CTX_PROMPT = `You are generating a session context file for handoff.
+Below is a structured digest of a Claude Code session: the user's prompts in
+order, the heaviest tool actions per turn, files edited and read, docs used,
+and subagents spawned. Write a concise markdown context document that would
+let a fresh Claude Code session continue this work seamlessly.
+
+Structure it as: ## Goal & scope, ## What was done (chronological, brief),
+## Current state, ## Key files (each with why it matters), ## Decisions &
+gotchas, ## Suggested next steps.
+
+Be specific and use the file paths from the digest. Do not invent facts that
+are not supported by the digest. Keep it under ~2500 words. Output ONLY the
+markdown document — no preamble.`;
+
+const ctxInFlight = new Map(); // session id -> {child, canceled}
+
+// With shell:true the direct child is a shell shim — kill the whole tree
+// so the actual claude process dies too.
+function killTree(child) {
+  if (!child || child.exitCode !== null) return;
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+  } else {
+    child.kill('SIGKILL');
+  }
+}
+
+function generateContextFile(s, dataDir, holder) {
+  return new Promise((resolve, reject) => {
+    const cwdOk = s.cwd && fs.existsSync(s.cwd);
+    const child = spawn('claude', ['-p'], {
+      shell: true, // claude is a .cmd shim on Windows
+      cwd: cwdOk ? s.cwd : undefined,
+      windowsHide: true,
+    });
+    holder.child = child;
+    let out = '';
+    let err = '';
+    const killer = setTimeout(() => {
+      killTree(child);
+      reject(new Error('claude CLI timed out after 5 minutes'));
+    }, 300000);
+    child.stdout.on('data', (c) => { out += c; });
+    child.stderr.on('data', (c) => { err += c; });
+    child.on('error', (e) => {
+      clearTimeout(killer);
+      reject(new Error('could not run the claude CLI (is it on PATH?): ' + e.message));
+    });
+    child.on('close', async (code) => {
+      clearTimeout(killer);
+      if (holder.canceled) {
+        reject(new Error('canceled'));
+        return;
+      }
+      if (code !== 0 || !out.trim()) {
+        reject(new Error('claude CLI failed' + (err.trim() ? ': ' + err.trim().slice(0, 300) : ` (exit ${code})`)));
+        return;
+      }
+      try {
+        const dir = path.join(cwdOk ? s.cwd : dataDir, '.claude', 'context');
+        await fsp.mkdir(dir, { recursive: true });
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+        const file = path.join(dir, `session-${s.id.slice(0, 8)}-${stamp}.md`);
+        await fsp.writeFile(file, out.trim() + '\n');
+        resolve({ ok: true, path: file, bytes: out.trim().length });
+      } catch (e) {
+        reject(e);
+      }
+    });
+    child.stdin.end(CTX_PROMPT + '\n\n---\n\n' + s.contextDigest());
+  });
+}
 
 async function serveStatic(res, urlPath) {
   const rel = urlPath === '/' ? 'index.html' : urlPath.slice(1);
@@ -126,6 +204,49 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(rollups.history(
       [...store.sessions.values()].map((s) => s.rollupSummary()))));
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/session/') && url.pathname.endsWith('/context-file') && req.method === 'POST') {
+    const id = url.pathname.slice('/api/session/'.length, -'/context-file'.length);
+    const s = store.sessions.get(id);
+    if (!s) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end('{"error":"unknown session"}');
+      return;
+    }
+    if (ctxInFlight.has(id)) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end('{"error":"a generation for this session is already running"}');
+      return;
+    }
+    const holder = { child: null, canceled: false };
+    ctxInFlight.set(id, holder);
+    try {
+      const result = await generateContextFile(s, DATA, holder);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      res.writeHead(holder.canceled ? 200 : 500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(holder.canceled ? { canceled: true } : { error: msg }));
+    } finally {
+      ctxInFlight.delete(id);
+    }
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/session/') && url.pathname.endsWith('/context-file') && req.method === 'DELETE') {
+    const id = url.pathname.slice('/api/session/'.length, -'/context-file'.length);
+    const holder = ctxInFlight.get(id);
+    res.writeHead(holder ? 200 : 404, { 'Content-Type': 'application/json' });
+    if (holder) {
+      holder.canceled = true;
+      killTree(holder.child);
+      res.end('{"ok":true}');
+    } else {
+      res.end('{"error":"no generation running for this session"}');
+    }
     return;
   }
 

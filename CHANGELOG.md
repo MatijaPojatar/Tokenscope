@@ -3,6 +3,20 @@
 Notable changes to Tokenscope. Format follows [Keep a Changelog](https://keepachangelog.com);
 versions follow [SemVer](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- **Context-file generation.** A `context file` button in the session
+  header has the locally installed `claude` CLI (headless `claude -p`,
+  billed to the user's own account) turn a digest of the whole session —
+  prompts in order, heaviest actions, files edited/read, docs, subagents,
+  compaction summaries — into a handoff document, saved under the
+  project's `.claude\context\session-<id>-<stamp>.md`. One generation per
+  session at a time; 5-minute timeout; errors surface in the header, and
+  a `cancel` button kills the running CLI (full process tree). Endpoints:
+  `POST` / `DELETE /api/session/:id/context-file`.
+
 ## [0.5.0] — 2026-08-18
 
 ### Added

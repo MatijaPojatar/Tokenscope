@@ -76,6 +76,12 @@ It runs as a local web page next to your terminal and shows, for every session:
   recent transcripts persist only thinking signatures, not the text. Every
   tool call in the timeline also shows `~X out`: what it cost to issue —
   its payload plus an even share of its API message's thinking.
+- **Context file** — a `context file` button in the session header pipes a
+  digest of the whole session (prompts, heaviest actions, files edited and
+  read, docs, subagents, compaction summaries) to your locally installed
+  `claude` CLI in headless mode and saves the resulting handoff document
+  under the project's `.claude\context\`. Paste or `@`-reference it to
+  seed a fresh session. Runs on your machine, billed to your own account.
 - **Cost & rate limits** — session USD cost and account rate-limit fill, fed
   by the statusline integration below.
 - **Cache economics** — a per-session ledger of the prompt cache, measured

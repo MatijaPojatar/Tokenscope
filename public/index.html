@@ -28,13 +28,16 @@
           <div class="head-row">
             <h1 id="s-title"></h1>
             <span id="live-dot" class="dot"></span>
+            <span id="s-hook" class="mono hook"></span>
           </div>
           <div class="head-meta">
             <span id="s-cwd" class="mono"></span>
             <span id="s-model" class="mono"></span>
             <span id="s-cost" class="mono"></span>
             <span id="s-rl" class="mono"></span>
-            <span id="s-hook" class="mono hook"></span>
+            <button id="ctx-btn" class="ctx-btn" title="Generate a handoff context file for this session — runs your local claude CLI headlessly (billed to your account) and writes the result under the project's .claude\context\">context file</button>
+            <button id="ctx-cancel-btn" class="ctx-btn" hidden title="Cancel the running generation">cancel</button>
+            <span id="ctx-status" class="mono ctx-status"></span>
           </div>
           <div class="gauge-wrap">
             <div class="gauge-label">
