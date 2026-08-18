@@ -162,6 +162,36 @@ function el(tag, cls, text) {
   return n;
 }
 
+// ---- collapsible right-column sections (state survives reloads) ----
+
+let sectPrefs = {};
+try { sectPrefs = JSON.parse(localStorage.getItem('tokenscope.sections') || '{}'); } catch { /* fresh */ }
+for (const h of document.querySelectorAll('.sect > h2')) {
+  const wrap = h.parentElement;
+  const key = h.dataset.sect;
+  if (sectPrefs[key]) wrap.classList.add('closed');
+  h.tabIndex = 0;
+  h.setAttribute('role', 'button');
+  h.setAttribute('aria-expanded', String(!sectPrefs[key]));
+  const tgl = () => {
+    const closed = wrap.classList.toggle('closed');
+    sectPrefs[key] = closed;
+    h.setAttribute('aria-expanded', String(!closed));
+    try { localStorage.setItem('tokenscope.sections', JSON.stringify(sectPrefs)); } catch { /* private mode */ }
+  };
+  h.onclick = tgl;
+  h.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tgl(); }
+  };
+}
+
+// Cross-links (clicking a flagged call, jumping to an agent row) must land
+// somewhere visible — reopen the target section if the user closed it.
+function openSect(key) {
+  const h = document.querySelector(`h2[data-sect="${key}"]`);
+  if (h && h.parentElement.classList.contains('closed')) h.click();
+}
+
 // ---- sidebar ----
 
 function renderList() {
@@ -250,6 +280,7 @@ function renderDetail() {
     allSuggs.find((g) => g.kind !== 'recache' && actionMatches(g, a)) || null;
   const focusFinding = (g) => {
     state.highlight = { kind: g.kind, subject: g.subject };
+    openSect('optimize');
     if (!state.suggExpanded[s.id] && !cappedSuggs(allSuggs).includes(g)) {
       state.suggExpanded[s.id] = true; // card is past the caps — reveal it
     }
@@ -516,6 +547,7 @@ function renderDetail() {
           for (const ag of s.agents || []) {
             if ((ag.actions || []).some((a) => actionMatches(next, a))) {
               state.agentToggles[`${s.id}|${ag.id}`] = true;
+              openSect('agents');
             }
           }
         }
@@ -645,7 +677,7 @@ function renderDetail() {
         r.onclick = () => {
           state.highlight = { kind: 'fatdoc', subject: d.path };
           if (u.t) state.turnToggles[turnKey(s.id, u.t)] = true;
-          if (u.agent) state.agentToggles[`${s.id}|${u.agent.id}`] = true;
+          if (u.agent) { state.agentToggles[`${s.id}|${u.agent.id}`] = true; openSect('agents'); }
           renderDetail();
           requestAnimationFrame(() => {
             const target = document.querySelector(`[data-akey="${CSS.escape(u.akey)}"]`);
@@ -826,6 +858,9 @@ $('docs-btn').onclick = () => {
   state.view = state.view === 'docs' ? 'session' : 'docs';
   if (state.view === 'docs') fetchReport(true);
   render();
+  // Keep the drawer hover-driven: a focused button would hold it open
+  // (:focus-within) over the content the click just revealed.
+  $('docs-btn').blur();
 };
 
 // ---- SSE ----
