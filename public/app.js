@@ -99,7 +99,7 @@ const ATT_NAMES = {
 };
 
 // Default per-kind display caps for the Optimize panel.
-const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, injected: 2, basefile: 3, skill: 2, recache: 99 };
+const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, injected: 2, basefile: 3, skill: 2, compact: 1, recache: 99 };
 function cappedSuggs(all) {
   const seen = {};
   return all.filter((g) => {
@@ -173,7 +173,7 @@ function renderList() {
     const meta = el('div', 'sm');
     meta.append(
       el('span', null, fmtTok(s.contextNow) + ' ctx'),
-      el('span', null, fmtAgo(s.lastActivity)),
+      el('span', null, (s.compactions ? `⟲${s.compactions} · ` : '') + fmtAgo(s.lastActivity)),
     );
     item.append(meta);
     item.onclick = () => { state.selected = s.id; state.pinned = true; state.view = 'session'; render(); };
@@ -229,6 +229,20 @@ function renderDetail() {
     legend.append(li);
   }
 
+  // compaction history + growth forecast under the gauge
+  const comps = s.compactions || [];
+  const gc = $('g-compact');
+  const gcBits = [];
+  if (comps.length > 0) {
+    const dropped = comps.reduce((n, c) => n + Math.max(0, (c.preTokens || 0) - (c.postTokens || 0)), 0);
+    gcBits.push(`⟲ compacted ${comps.length}× · ${fmtTok(dropped)} of history dropped`);
+  }
+  if (s.forecast && s.forecast.turnsToFull != null && s.forecast.turnsToFull <= 40) {
+    gcBits.push(`≈${s.forecast.turnsToFull} turns to a full window at the current ~${fmtTok(s.forecast.perTurn)}/turn`);
+  }
+  gc.hidden = gcBits.length === 0;
+  gc.textContent = gcBits.join('   ·   ');
+
   // Optimize findings indexed for cross-linking: calls belonging to a finding
   // get marked, and clicking one focuses its card in the Optimize panel.
   const allSuggs = s.suggestions || [];
@@ -246,12 +260,29 @@ function renderDetail() {
     });
   };
 
-  // timeline — newest turn first
+  // timeline — newest turn first, with compaction boundaries interleaved
   const turnsBox = $('turns');
   turnsBox.replaceChildren();
   const turns = [...(s.turns || [])].reverse();
   const maxTok = Math.max(200, ...turns.flatMap((t) => t.actions.map((a) => a.tokens)));
-  turns.forEach((t, i) => {
+  const entries = turns.map((t, i) => ({ t, i }));
+  for (const c of comps) {
+    // The continuation-summary turn shares the boundary's timestamp — the
+    // marker goes just below it, above the first pre-compaction turn.
+    const ct = new Date(c.ts).getTime();
+    let at = entries.findIndex((e) => e.t && e.t.ts && new Date(e.t.ts).getTime() < ct);
+    if (at < 0) at = entries.length;
+    entries.splice(at, 0, { c });
+  }
+  entries.forEach(({ t, i, c }) => {
+    if (c) {
+      const row = el('div', 'compact-marker');
+      const label = `⟲ context compacted — ${fmtTok(c.preTokens)} → ${fmtTok(c.postTokens)}` +
+        ` (${c.trigger}${c.durationMs ? ' · ' + fmtMs(c.durationMs) : ''})`;
+      row.append(el('span', 'cm-line'), el('span', 'cm-label', label), el('span', 'cm-line'));
+      turnsBox.append(row);
+      return;
+    }
     const key = turnKey(s.id, t);
     const expanded = state.turnToggles[key] ?? (i === 0); // newest open by default
     const turn = el('div', 'turn' + (expanded ? '' : ' collapsed'));
@@ -259,9 +290,13 @@ function renderDetail() {
     head.tabIndex = 0;
     head.setAttribute('role', 'button');
     head.setAttribute('aria-expanded', String(expanded));
+    const tp = t.compactSummary
+      ? el('span', 'tp cs', '⟲ compaction summary — what the model kept of the dropped history')
+      : el('span', 'tp', '> ' + (t.prompt || ''));
+    if (t.compactSummary) tp.title = t.prompt || '';
     head.append(
       el('span', 'chev', expanded ? '▾' : '▸'),
-      el('span', 'tp', '> ' + (t.prompt || '')),
+      tp,
       el('span', 'tt', `${t.ts ? fmtClock(t.ts) + ' · ' : ''}${t.actions.length} actions · +${fmtTok(t.fresh)} in · ${fmtTok(t.output)} out`),
     );
     const toggle = () => {
@@ -424,6 +459,10 @@ function renderDetail() {
       `${fmtTok(g.impact)} re-cached after idle gaps (${g.count}% of input spend)`,
       'The prompt cache expires when a session sits idle; grouping interactions (or starting fresh sessions) avoids re-paying the whole prefix.',
     ],
+    compact: (g) => [
+      `context compacted ${g.count}× — ~${fmtTok(g.impact)} re-paid`,
+      'Each compaction summarizes and drops history, then re-pays the rebuilt context as fresh input. Trim always-loaded base files, route heavy searches and reads through agents (their tokens stay in separate windows), and prefer a fresh session per task.',
+    ],
     skill: (g) => [
       `${g.subject}… — ran ${g.count}× · ${fmtTok(g.tokens)} in results`,
       'A workflow Claude re-runs by hand — package it as a skill (.claude/skills/<name>/SKILL.md) with the exact command and how to read its output, or a hook in settings.json if it should run automatically.',
@@ -455,7 +494,7 @@ function renderDetail() {
     const render = SUGG[g.kind];
     if (!render) continue;
     const [headline, fix] = render(g);
-    const clickable = g.kind !== 'recache' && g.kind !== 'injected' && g.kind !== 'basefile';
+    const clickable = g.kind !== 'recache' && g.kind !== 'injected' && g.kind !== 'basefile' && g.kind !== 'compact';
     const isActive = clickable && state.highlight &&
       state.highlight.kind === g.kind && state.highlight.subject === g.subject;
     const item = el('div', 'sugg-item' + (clickable ? ' clickable' : '') + (isActive ? ' active' : ''));
@@ -504,6 +543,44 @@ function renderDetail() {
     };
     suggRows.append(more);
   }
+
+  // compaction events — what each dropped and what the rebuild cost
+  const compactWrap = $('compact-wrap');
+  const compactRows = $('compact-rows');
+  compactRows.replaceChildren();
+  compactWrap.hidden = comps.length === 0;
+  comps.forEach((c, ci) => {
+    const rowKey = `${s.id}|compact|${ci}`;
+    const open = !!state.baseToggles[rowKey];
+    const dropped = Math.max(0, (c.preTokens || 0) - (c.postTokens || 0));
+    const r = el('div', 'base-row exp');
+    r.append(
+      el('span', null, `${open ? '▾' : '▸'} ${fmtClock(c.ts)} · ${c.trigger}`),
+      el('b', null, '−' + fmtTok(dropped)),
+    );
+    r.tabIndex = 0;
+    r.setAttribute('role', 'button');
+    r.setAttribute('aria-expanded', String(open));
+    const tgl = () => { state.baseToggles[rowKey] = !open; renderDetail(); };
+    r.onclick = tgl;
+    r.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tgl(); }
+    };
+    compactRows.append(r);
+    if (open) {
+      const box = el('div', 'base-detail');
+      const lines = [
+        `context ${fmtTok(c.preTokens)} → ${fmtTok(c.postTokens)} · ${fmtTok(dropped)} tokens of history dropped`,
+        (c.summaryTokens || c.rebuildTokens)
+          ? `cost: ~${fmtTok(c.summaryTokens)} summary + ~${fmtTok(c.rebuildTokens)} rebuilt context, re-paid as fresh input`
+          : null,
+        c.durationMs ? `compaction ran ${fmtMs(c.durationMs)}` : null,
+        'Dropped history is gone for the model — earlier decisions survive only in the summary turn marked ⟲ in the timeline.',
+      ];
+      for (const line of lines.filter(Boolean)) box.append(el('div', null, line));
+      compactRows.append(box);
+    }
+  });
 
   // docs leaderboard
   const docsBox = $('doc-rows');

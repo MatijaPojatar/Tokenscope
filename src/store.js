@@ -110,6 +110,7 @@ export class Store {
         totals: s.totals,
         costUsd: s.costUsd,
         agentCount: s.agents.size,
+        compactions: s.compactions.length,
       }))
       .sort((a, b) => String(b.lastActivity || '').localeCompare(String(a.lastActivity || '')));
   }

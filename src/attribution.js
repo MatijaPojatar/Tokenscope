@@ -108,6 +108,9 @@ export class SessionModel {
     this.costUsd = null; // authoritative session cost from the statusline feed
     this.exactCostUsd = 0; // accumulated from OTel api_request events
     this.windowExact = null; // exact window size from the statusline feed
+    this.compactions = []; // {ts, trigger, preTokens, postTokens, durationMs, summaryTokens, rebuildTokens}
+    this.seenCompactions = new Set(); // boundary uuids — resumes re-append old lines
+    this.pendingCompaction = null; // record awaiting its first post-compaction settle
   }
 
   currentTurn() {
@@ -135,9 +138,36 @@ export class SessionModel {
           actions: [],
           fresh: 0,
           output: 0,
+          compactSummary: !!evt.isCompactSummary,
         });
         if (this.turns.length > MAX_TURNS) this.turns.shift();
-        this.pending.push({ cat: 'conversation', chars: evt.chars });
+        this.pending.push({
+          cat: 'conversation',
+          chars: evt.chars,
+          // The continuation summary belongs to the compaction that produced
+          // it — credit() also books its tokens on that record.
+          compactRec: evt.isCompactSummary ? this.pendingCompaction : null,
+        });
+        return;
+      }
+
+      case 'compaction': {
+        if (this.seenCompactions.has(evt.uuid)) return;
+        this.seenCompactions.add(evt.uuid);
+        const rec = {
+          ts: evt.timestamp,
+          trigger: evt.trigger,
+          preTokens: evt.preTokens,
+          postTokens: evt.postTokens,
+          durationMs: evt.durationMs,
+          summaryTokens: 0,
+          rebuildTokens: 0,
+        };
+        this.compactions.push(rec);
+        this.pendingCompaction = rec;
+        // The next call rewrites the whole rebuilt context; the previous
+        // output no longer re-enters the cache as a plain prefix append.
+        this.prevOutput = 0;
         return;
       }
 
@@ -266,6 +296,14 @@ export class SessionModel {
         this.credit(p, t);
       });
       this.context.base = Math.max(0, fresh - spent);
+    } else if (this.pendingCompaction) {
+      // First call after a compaction rewrites the rebuilt context — base,
+      // summary, and preserved tail — as fresh cacheWrite. Attribute known
+      // pending items at their estimate; the excess is the rebuild cost,
+      // booked on the compaction record rather than misread as recache.
+      this.pending.forEach((p, i) => this.credit(p, estimates[i]));
+      this.pendingCompaction.rebuildTokens += Math.max(0, fresh - estSum);
+      this.pendingCompaction = null;
     } else if (estSum === 0) {
       // Nothing known was inserted, yet tokens were written — a cache
       // refresh (TTL expiry) or context material we can't see. Don't invent
@@ -308,6 +346,23 @@ export class SessionModel {
     if (!a.title && evt.kind === 'prompt') a.title = evt.text.slice(0, 100);
     a.addEvent(evt);
     if (evt.timestamp) this.lastActivity = evt.timestamp;
+  }
+
+  // Context-growth forecast: median fresh+output over recent completed
+  // turns → turns left until the window fills (compaction territory).
+  // Median rather than mean so one recache spike or compaction rebuild
+  // doesn't dominate.
+  forecast() {
+    if (!this.contextNow) return null;
+    const samples = this.turns.slice(0, -1).slice(-10)
+      .map((t) => t.fresh + t.output)
+      .filter((v) => v > 0);
+    if (samples.length < 3) return null;
+    const sorted = [...samples].sort((a, b) => a - b);
+    const perTurn = sorted[Math.floor(sorted.length / 2)];
+    if (perTurn <= 0) return null;
+    const win = this.windowExact || this.window;
+    return { perTurn, turnsToFull: Math.max(0, Math.ceil((win - this.contextNow) / perTurn)) };
   }
 
   // Statusline feed: authoritative cost and exact context-window size.
@@ -444,7 +499,18 @@ export class SessionModel {
         });
       }
     }
-    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs, ...injectedSuggs, ...basefileSuggs, ...skillSuggs);
+    // Repeated compaction: the session keeps outgrowing its window — every
+    // event re-pays a summary plus the rebuilt context, and drops history.
+    const compactSuggs = [];
+    const compactCost = this.compactions.reduce(
+      (n, c) => n + c.summaryTokens + c.rebuildTokens, 0);
+    if (this.compactions.length >= 2 || compactCost >= 30000) {
+      compactSuggs.push({
+        kind: 'compact', impact: Math.max(1, compactCost),
+        count: this.compactions.length, subject: null, context: null,
+      });
+    }
+    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs, ...injectedSuggs, ...basefileSuggs, ...skillSuggs, ...compactSuggs);
     out.sort(byImpact);
     out.splice(40);
     // Recache is mostly a workflow fact, not a docs fix — one entry, always last,
@@ -465,6 +531,7 @@ export class SessionModel {
     this.context[p.cat] = (this.context[p.cat] || 0) + tokens;
     if (p.action) p.action.tokens += tokens;
     if (p.baseRec) p.baseRec.tokens += tokens;
+    if (p.compactRec) p.compactRec.summaryTokens += tokens;
     if (p.docPath && p.cat === 'docsRead') {
       const d = this.docs.get(p.docPath);
       if (d) d.tokens += tokens;
@@ -485,6 +552,8 @@ export class SessionModel {
       sidechain: this.sidechain,
       costUsd: this.costUsd ?? (this.exactCostUsd > 0 ? this.exactCostUsd : null),
       turns: this.turns.slice(-60),
+      compactions: this.compactions,
+      forecast: this.forecast(),
       docs: this.mergedDocs().slice(0, 30),
       suggestions: this.suggestions(),
       baseFiles: this.baseFiles,

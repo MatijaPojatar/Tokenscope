@@ -8,9 +8,11 @@
 //   { kind: 'api',          apiId, model, timestamp, isSidechain, promptId,
 //                           usage: {input, cacheWrite, cacheRead, output},
 //                           blocks: [{type:'tool_use', id, name, input} | {type, chars}] }
-//   { kind: 'prompt',       text, chars, timestamp, promptId, isSidechain, cwd }
+//   { kind: 'prompt',       text, chars, timestamp, promptId, isSidechain, cwd,
+//                           isCompactSummary }
 //   { kind: 'tool_results', results: [{toolUseId, chars}], timestamp, isSidechain }
 //   { kind: 'attachment',   atype, chars, path, timestamp }
+//   { kind: 'compaction',   uuid, timestamp, trigger, preTokens, postTokens, durationMs }
 //   { kind: 'title',        title }
 
 function contentChars(content) {
@@ -104,6 +106,22 @@ export function parseLine(line) {
         promptId: e.promptId,
         isSidechain: !!e.isSidechain,
         cwd: e.cwd,
+        isCompactSummary: !!e.isCompactSummary,
+      };
+    }
+
+    // Compaction boundary: the harness summarized the conversation and
+    // rebuilt the context. compactMetadata carries measured pre/post sizes.
+    if (e.type === 'system' && e.subtype === 'compact_boundary') {
+      const m = e.compactMetadata || {};
+      return {
+        kind: 'compaction',
+        uuid: e.uuid,
+        timestamp: e.timestamp,
+        trigger: m.trigger || 'auto',
+        preTokens: m.preTokens || 0,
+        postTokens: m.postTokens || 0,
+        durationMs: m.durationMs || null,
       };
     }
 

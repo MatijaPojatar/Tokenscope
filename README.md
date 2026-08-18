@@ -25,6 +25,14 @@ It runs as a local web page next to your terminal and shows, for every session:
   cache re-writes after idle gaps, and repeated commands (→ package as a
   skill or hook). Clicking a finding highlights its calls in the timeline,
   and clicking a flagged call focuses its finding.
+- **Compaction** — every compaction event, measured from the transcript:
+  context size before → after, tokens of history dropped, what the summary
+  and the context rebuild re-paid, trigger and duration. Boundaries appear
+  as markers in the timeline (with the continuation summary as its own ⟲
+  turn), a panel itemizes each event, the gauge shows a "≈ N turns to a
+  full window" forecast from the recent per-turn burn rate, and repeated
+  compaction raises an Optimize finding. The rebuild is booked to its
+  compaction, not misread as cache recache.
 - **Docs leaderboard** — which `.md` files (project `.claude\` docs and
   auto-injected CLAUDE.md included) were read, how often, and what they
   cost. Each doc expands to every individual use — time, tokens, and the

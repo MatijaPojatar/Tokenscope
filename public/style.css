@@ -116,6 +116,8 @@ body {
 .legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
 .swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 
+.g-compact { font-size: 0.66rem; color: var(--muted); margin-top: 0.45rem; }
+
 #cols { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr); gap: 1.5rem; padding: 1.2rem 1.4rem 3rem; }
 @media (max-width: 900px) { #cols { grid-template-columns: 1fr; } }
 
@@ -151,6 +153,17 @@ h2 {
 .abar { background: var(--panel-2); border-radius: 3px; height: 10px; }
 .abar div { height: 100%; border-radius: 3px; }
 .anum { text-align: right; color: var(--muted); }
+
+/* ---- compaction ---- */
+.compact-marker {
+  display: flex; align-items: center; gap: 0.6rem;
+  margin: 0.9rem 0 1.1rem;
+  font-family: var(--mono); font-size: 0.68rem; color: var(--c-recache);
+}
+.compact-marker .cm-line { flex: 1; border-top: 1px dashed var(--c-recache); opacity: 0.45; }
+.compact-marker .cm-label { white-space: nowrap; }
+.turn-head .tp.cs { color: var(--muted); font-style: italic; }
+#compact-wrap { margin-bottom: 1.6rem; }
 
 /* ---- docs ---- */
 .doc-row {
