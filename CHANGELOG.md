@@ -3,7 +3,7 @@
 Notable changes to Tokenscope. Format follows [Keep a Changelog](https://keepachangelog.com);
 versions follow [SemVer](https://semver.org).
 
-## [Unreleased]
+## [0.5.0] — 2026-08-18
 
 ### Added
 
@@ -177,6 +177,7 @@ Initial release.
 - Claude Code plugin packaging: marketplace manifest, SessionStart
   auto-boot hook, real-time event hooks, `/tokenscope:dashboard` skill.
 
+[0.5.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.5.0
 [0.4.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.4.0
 [0.3.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.3.0
 [0.2.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.2.0
