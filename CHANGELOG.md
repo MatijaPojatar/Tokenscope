@@ -3,7 +3,7 @@
 Notable changes to Tokenscope. Format follows [Keep a Changelog](https://keepachangelog.com);
 versions follow [SemVer](https://semver.org).
 
-## [Unreleased]
+## [0.4.0] — 2026-08-18
 
 ### Added
 
@@ -25,6 +25,11 @@ versions follow [SemVer](https://semver.org).
   context per session over time, and per-project / per-model totals —
   hand-rolled charts, still zero dependencies. `--data <dir>` overrides
   the rollup location.
+
+### Changed
+
+- The `trends` / `mcp` / `docs` buttons moved out of the brand row onto
+  their own tab row in the sidebar, stretched evenly across its width.
 
 ## [0.3.0] — 2026-08-18
 
@@ -140,6 +145,7 @@ Initial release.
 - Claude Code plugin packaging: marketplace manifest, SessionStart
   auto-boot hook, real-time event hooks, `/tokenscope:dashboard` skill.
 
+[0.4.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.4.0
 [0.3.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.3.0
 [0.2.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.2.0
 [0.1.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.1.0

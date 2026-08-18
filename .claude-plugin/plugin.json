@@ -1,7 +1,7 @@
 {
   "name": "tokenscope",
   "description": "Live context and token-usage dashboard for Claude Code — per-action costs, base-context breakdown, docs leaderboard, and optimization suggestions at http://localhost:4820",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": { "name": "MatijaPojatar" },
   "repository": "https://github.com/MatijaPojatar/Tokenscope",
   "license": "MIT"
