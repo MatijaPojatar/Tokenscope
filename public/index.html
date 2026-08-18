@@ -14,6 +14,7 @@
         <div class="brand">tokenscope</div>
       </div>
       <div class="brand-btns">
+        <button id="map-btn" title="Codebase treemap — tokens spent reading each file">map</button>
         <button id="trends-btn" title="Usage trends across days, projects, and models">trends</button>
         <button id="mcp-btn" title="MCP &amp; skills across all sessions">mcp</button>
         <button id="docs-btn" title="Docs across all sessions">docs</button>
@@ -106,6 +107,19 @@
           <span class="mono report-sub">rolled-up session history — accrues from install on and outlives the live window</span>
         </header>
         <div id="trends-rows"></div>
+      </div>
+      <div id="map-report" class="report" hidden>
+        <header class="report-head">
+          <h1>Codebase map</h1>
+          <span class="mono report-sub">rectangle size = tokens spent reading the file, across every loaded session and agent</span>
+        </header>
+        <div id="map-projects" class="map-projects"></div>
+        <div class="map-body">
+          <div id="map-canvas" class="map-canvas"></div>
+          <aside id="map-detail" class="map-detail"></aside>
+        </div>
+        <div id="map-legend" class="map-legend"></div>
+        <div id="map-summary" class="map-summary mono"></div>
       </div>
     </main>
   </div>

@@ -116,6 +116,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/filemap') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(store.fileReport()));
+    return;
+  }
+
   if (url.pathname === '/api/history') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(rollups.history(

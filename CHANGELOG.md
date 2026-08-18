@@ -3,6 +3,25 @@
 Notable changes to Tokenscope. Format follows [Keep a Changelog](https://keepachangelog.com);
 versions follow [SemVer](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- **Codebase map.** A `map` button opens a draggable bubble map per
+  project: circle area = tokens spent reading that file, aggregated
+  across every loaded session and agent (all Reads — code and docs —
+  plus auto-injected nested CLAUDE.md; harness-internal spill files
+  excluded). Bubbles cluster and color by top-level directory via a
+  hand-rolled force simulation (anchor attraction + pairwise collision)
+  — drag any bubble to rearrange, dropping pins it in place while the
+  flock packs around it, double-click unpins. Only the ~90 largest files
+  get their own bubble (the rest merge into one tail bubble per
+  directory, keeping the simulation calm), and clicking a bubble opens
+  its details in a side panel — path, tokens, share of project, reads,
+  sessions, agent involvement; tail bubbles list their merged files.
+  Name/token labels on larger bubbles, a directory legend and project
+  selector below. Still zero dependencies. Served by `/api/filemap`.
+
 ## [0.4.0] — 2026-08-18
 
 ### Added

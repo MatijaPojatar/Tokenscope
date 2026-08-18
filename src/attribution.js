@@ -94,6 +94,7 @@ export class SessionModel {
     this.contextNow = 0;
     this.turns = [];
     this.docs = new Map(); // path -> {path, reads, tokens}
+    this.fileReads = new Map(); // path -> {path, reads, tokens} — every Read, code and docs
     this.context = {
       base: 0, conversation: 0, docsRead: 0, codeRead: 0,
       search: 0, agent: 0, toolOther: 0, attachments: 0,
@@ -245,6 +246,11 @@ export class SessionModel {
               d.reads += 1;
               this.docs.set(docPath, d);
             }
+            if (docPath) {
+              const fr = this.fileReads.get(docPath) || { path: docPath, reads: 0, tokens: 0 };
+              fr.reads += 1;
+              this.fileReads.set(docPath, fr);
+            }
           }
           this.pending.push({ cat, chars: r.chars, action, docPath });
         }
@@ -270,6 +276,9 @@ export class SessionModel {
           const d = this.docs.get(evt.path) || { path: evt.path, reads: 0, tokens: 0 };
           d.reads += 1;
           this.docs.set(evt.path, d);
+          const fr = this.fileReads.get(evt.path) || { path: evt.path, reads: 0, tokens: 0 };
+          fr.reads += 1;
+          this.fileReads.set(evt.path, fr);
           this.pending.push({ cat: 'docsRead', chars: evt.chars, action, docPath: evt.path });
         } else {
           // Track injected context by type so the base-context panel can
@@ -721,6 +730,28 @@ export class SessionModel {
     return [...map.values()].sort((x, y) => y.tokens - x.tokens);
   }
 
+  // Every file read by this session or its agents, summed per path —
+  // feeds the cross-session codebase map. Harness-internal files (tool
+  // result spill, transcripts, scratchpads) are the harness's plumbing,
+  // not the user's codebase — same exclusion the docs stats apply.
+  mergedFileReads() {
+    const map = new Map();
+    const add = (f, viaAgent) => {
+      if (HARNESS_PATH.test(String(f.path))) return;
+      const k = String(f.path).replace(/\//g, '\\').toLowerCase();
+      const cur = map.get(k) || { path: f.path, reads: 0, tokens: 0, agent: false };
+      cur.reads += f.reads;
+      cur.tokens += f.tokens;
+      if (viaAgent) cur.agent = true;
+      map.set(k, cur);
+    };
+    for (const f of this.fileReads.values()) add(f, false);
+    for (const a of this.agents.values()) {
+      for (const f of a.fileReads.values()) add(f, true);
+    }
+    return [...map.values()];
+  }
+
   // Optimization suggestions, grounded in this session's actual token spend.
   // Each finding: {kind, impact (tokens), count, subject, context}.
   suggestions() {
@@ -887,6 +918,10 @@ export class SessionModel {
     if (p.docPath && p.cat === 'docsRead') {
       const d = this.docs.get(p.docPath);
       if (d) d.tokens += tokens;
+    }
+    if (p.docPath) {
+      const fr = this.fileReads.get(p.docPath);
+      if (fr) fr.tokens += tokens;
     }
   }
 

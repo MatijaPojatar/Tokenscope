@@ -27,6 +27,9 @@ const state = {
   mcpReportFetched: 0,
   trends: null,
   trendsFetched: 0,
+  fileMap: null,
+  fileMapFetched: 0,
+  mapProject: null, // selected project cwd on the map page
   turnToggles: {}, // turn key -> expanded override (survives live re-renders)
   agentToggles: {}, // agent key -> expanded
   highlight: null, // {kind, subject} from a clicked Optimize entry
@@ -1192,6 +1195,398 @@ function renderTrends() {
   }
 }
 
+// ---- codebase map: circle packing with drag ----
+//
+// Each file is a circle (area ∝ tokens), attracted to its directory's
+// anchor point and separated by pairwise collision — a small hand-rolled
+// force simulation. Drag a circle to move it; dropping pins it in place
+// and the rest of the flock packs around it. Double-click unpins.
+
+let mapSim = null; // {raf} — the running animation frame, if any
+
+function stopMapSim() {
+  if (mapSim) {
+    cancelAnimationFrame(mapSim.raf);
+    mapSim = null;
+  }
+}
+
+const MAP_COLORS = [
+  'var(--c-base)', 'var(--c-docsRead)', 'var(--c-output)', 'var(--c-agent)',
+  'var(--c-search)', 'var(--c-conversation)', 'var(--c-codeRead)',
+  'var(--c-toolOther)', 'var(--c-recache)', 'var(--c-attachments)',
+];
+
+function renderMap() {
+  stopMapSim();
+  const canvas = $('map-canvas');
+  const projBox = $('map-projects');
+  const legendBox = $('map-legend');
+  const summary = $('map-summary');
+  canvas.replaceChildren();
+  projBox.replaceChildren();
+  legendBox.replaceChildren();
+  const report = state.fileMap;
+  if (!report) {
+    summary.textContent = 'loading…';
+    return;
+  }
+  if (report.length === 0) {
+    summary.textContent = 'no file reads in the loaded window';
+    return;
+  }
+
+  if (!state.mapProject || !report.some((p) => p.cwd === state.mapProject)) {
+    state.mapProject = report[0].cwd;
+  }
+  for (const p of report) {
+    const b = el('button', p.cwd === state.mapProject ? 'active' : '');
+    b.textContent = p.cwd.replace(/\//g, '\\').split('\\').slice(-2).join('\\');
+    b.title = `${p.cwd} — ${fmtTok(p.totalTokens)} read`;
+    b.onclick = () => { state.mapProject = p.cwd; renderMap(); };
+    projBox.append(b);
+  }
+  const proj = report.find((p) => p.cwd === state.mapProject);
+
+  // group files by top-level directory relative to the project root
+  const prefix = proj.cwd.replace(/\//g, '\\').replace(/\\+$/, '') + '\\';
+  const groups = new Map();
+  for (const f of proj.files) {
+    if (f.tokens <= 0) continue;
+    const norm = String(f.path).replace(/\//g, '\\');
+    let rel;
+    let top;
+    if (norm.toLowerCase().startsWith(prefix.toLowerCase())) {
+      rel = norm.slice(prefix.length);
+      const cut = rel.indexOf('\\');
+      top = cut < 0 ? '(root)' : rel.slice(0, cut);
+    } else {
+      rel = norm;
+      top = '(outside project)';
+    }
+    const g = groups.get(top) || { name: top, value: 0, files: [] };
+    g.value += f.tokens;
+    g.files.push({ ...f, rel, value: f.tokens });
+    groups.set(top, g);
+  }
+  const groupList = [...groups.values()].sort((a, b) => b.value - a.value);
+
+  const W = canvas.clientWidth || 900;
+  const H = 560;
+  canvas.style.height = H + 'px';
+
+  // build nodes — only the globally largest files get their own bubble;
+  // everything below the cut merges into one tail bubble per directory,
+  // which keeps the simulation calm enough to settle
+  const MAX_BUBBLES = 90;
+  const keep = new Set(
+    groupList.flatMap((g) => g.files)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, MAX_BUBBLES));
+  const nodes = [];
+  let totalValue = 0;
+  groupList.forEach((g, gi) => {
+    const kept = g.files.filter((f) => keep.has(f)).sort((a, b) => b.value - a.value);
+    const tail = g.files.filter((f) => !keep.has(f));
+    for (const f of kept) {
+      nodes.push({ f, gi, group: g.name, value: f.value });
+      totalValue += f.value;
+    }
+    if (tail.length > 0) {
+      const tailValue = tail.reduce((n, f) => n + f.value, 0);
+      nodes.push({
+        f: {
+          rel: `(${tail.length} more files)`,
+          reads: tail.reduce((n, f) => n + f.reads, 0),
+          tokens: tail.reduce((n, f) => n + f.tokens, 0),
+          value: tailValue,
+          sessions: 0,
+          merged: true,
+          tailFiles: tail.sort((a, b) => b.value - a.value),
+        },
+        gi,
+        group: g.name,
+        value: tailValue,
+      });
+      totalValue += tailValue;
+    }
+  });
+
+  // circle areas fill ~36% of the canvas; anchors on a phyllotaxis spiral
+  const scale = Math.sqrt((0.36 * W * H) / (Math.PI * Math.max(1, totalValue)));
+  const anchors = groupList.map((g, i) => {
+    if (i === 0 || groupList.length === 1) return { x: W / 2, y: H / 2 };
+    const ang = i * 2.399963;
+    const rad = (0.14 + 0.34 * Math.sqrt(i / groupList.length)) * Math.min(W, H);
+    return {
+      x: W / 2 + Math.cos(ang) * rad * Math.min(2, W / H),
+      y: H / 2 + Math.sin(ang) * rad,
+    };
+  });
+  // initial placement: a near-packed spiral around each group's anchor,
+  // biggest bubble at the center — starts close to the settled layout
+  const perGroup = new Map();
+  for (const n of nodes) {
+    n.r = Math.max(4, Math.sqrt(n.value) * scale);
+    n.vx = 0;
+    n.vy = 0;
+    n.pinned = false;
+    const list = perGroup.get(n.gi) || [];
+    list.push(n);
+    perGroup.set(n.gi, list);
+  }
+  for (const [gi, list] of perGroup) {
+    const a = anchors[gi];
+    let packedArea = 0;
+    list.forEach((n, k) => {
+      packedArea += Math.PI * n.r * n.r;
+      if (k === 0) {
+        n.x = a.x;
+        n.y = a.y;
+      } else {
+        const ang = k * 2.399963;
+        const rad = Math.sqrt(packedArea / Math.PI);
+        n.x = a.x + Math.cos(ang) * rad;
+        n.y = a.y + Math.sin(ang) * rad;
+      }
+      n.x = Math.min(W - n.r, Math.max(n.r, n.x));
+      n.y = Math.min(H - n.r, Math.max(n.r, n.y));
+    });
+  }
+
+  // DOM circles
+  let dragging = null;
+  let selected = null;
+  let alpha = 1;
+  const wake = (level) => {
+    alpha = Math.max(alpha, level);
+    if (!mapSim) mapSim = { raf: requestAnimationFrame(tick) };
+  };
+  const select = (n) => {
+    if (selected) selected.el.classList.remove('selected');
+    selected = n;
+    if (n) n.el.classList.add('selected');
+    renderMapDetail(n, proj);
+  };
+  for (const n of nodes) {
+    const f = n.f;
+    const cell = el('div', 'tm-cell');
+    cell.style.width = n.r * 2 + 'px';
+    cell.style.height = n.r * 2 + 'px';
+    cell.style.background = MAP_COLORS[n.gi % MAP_COLORS.length];
+    const name = f.merged ? f.rel : f.rel.split('\\').pop();
+    if (n.r >= 24) cell.append(el('div', 'tm-name', name));
+    if (n.r >= 34) cell.append(el('div', 'tm-tok', fmtTok(f.tokens)));
+    cell.title = `${f.rel} — ${fmtTok(f.tokens)} tokens · click for details`;
+    n.el = cell;
+    cell.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      cell.setPointerCapture(e.pointerId);
+      const rect = canvas.getBoundingClientRect();
+      const sx = e.clientX;
+      const sy = e.clientY;
+      let moved = false;
+      dragging = n;
+      n.vx = 0;
+      n.vy = 0;
+      const move = (ev) => {
+        if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return;
+        moved = true;
+        cell.classList.add('dragging');
+        n.x = ev.clientX - rect.left;
+        n.y = ev.clientY - rect.top;
+        wake(0.5);
+      };
+      const up = () => {
+        cell.removeEventListener('pointermove', move);
+        cell.classList.remove('dragging');
+        dragging = null;
+        if (moved) {
+          n.pinned = true;
+          cell.classList.add('pinned');
+          wake(0.3);
+        } else {
+          select(n); // a plain click selects — details in the side panel
+        }
+      };
+      cell.addEventListener('pointermove', move);
+      cell.addEventListener('pointerup', up, { once: true });
+    });
+    cell.addEventListener('dblclick', () => {
+      n.pinned = false;
+      cell.classList.remove('pinned');
+      wake(0.4);
+    });
+    canvas.append(cell);
+  }
+  renderMapDetail(null, proj);
+
+  // legend — directory colors
+  groupList.forEach((g, gi) => {
+    const item = el('span');
+    const sw = el('i', 'swatch');
+    sw.style.background = MAP_COLORS[gi % MAP_COLORS.length];
+    item.append(sw, document.createTextNode(`${g.name} ${fmtTok(g.value)}`));
+    legendBox.append(item);
+  });
+
+  const draw = () => {
+    for (const n of nodes) {
+      n.el.style.transform = `translate(${n.x - n.r}px, ${n.y - n.r}px)`;
+    }
+  };
+
+  // one physics step: anchor pull, pairwise separation, bounds.
+  // During pre-settle the pull targets the directory anchor (clustering);
+  // once settled, each node's own resting spot becomes its home, so a
+  // drag only displaces local neighbors — no global rearrangement.
+  let settled = false;
+  const step = (withPull) => {
+    if (withPull) {
+      const pull = 0.02 * alpha;
+      for (const n of nodes) {
+        if (n === dragging || n.pinned) continue;
+        const tx = settled ? n.hx : anchors[n.gi].x;
+        const ty = settled ? n.hy : anchors[n.gi].y;
+        n.vx = (n.vx + (tx - n.x) * pull) * 0.86;
+        n.vy = (n.vy + (ty - n.y) * pull) * 0.86;
+        n.x += n.vx;
+        n.y += n.vy;
+      }
+    }
+    // positional correction — big circles move less
+    for (let iter = 0; iter < 2; iter++) {
+      for (let i = 0; i < nodes.length; i++) {
+        const a = nodes[i];
+        for (let j = i + 1; j < nodes.length; j++) {
+          const b = nodes[j];
+          let dx = b.x - a.x;
+          let dy = b.y - a.y;
+          const min = a.r + b.r + 1.5;
+          const d2 = dx * dx + dy * dy;
+          if (d2 >= min * min) continue;
+          let d = Math.sqrt(d2);
+          if (d < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy); }
+          const push = ((min - d) / d) * 0.5;
+          const aFixed = a === dragging || a.pinned;
+          const bFixed = b === dragging || b.pinned;
+          if (aFixed && bFixed) continue;
+          const aw = aFixed ? 0 : bFixed ? 1 : (b.r * b.r) / (a.r * a.r + b.r * b.r);
+          const bw = bFixed ? 0 : aFixed ? 1 : 1 - aw;
+          a.x -= dx * push * aw;
+          a.y -= dy * push * aw;
+          b.x += dx * push * bw;
+          b.y += dy * push * bw;
+        }
+      }
+    }
+    for (const n of nodes) {
+      if (n === dragging) continue;
+      n.x = Math.min(W - n.r, Math.max(n.r, n.x));
+      n.y = Math.min(H - n.r, Math.max(n.r, n.y));
+    }
+  };
+
+  const tick = () => {
+    step(true);
+    draw();
+    alpha *= 0.99;
+    if (alpha > 0.005 || dragging) {
+      mapSim = { raf: requestAnimationFrame(tick) };
+    } else {
+      mapSim = null;
+    }
+  };
+
+  // settle entirely off-screen before the first paint: the untangling
+  // happens in a synchronous burst (milliseconds), then the map appears
+  // already at rest — the animation loop only runs when a drag wakes it.
+  for (let i = 0; i < 300 && alpha > 0.02; i++) {
+    step(true);
+    alpha *= 0.985;
+  }
+  for (let i = 0; i < 60; i++) step(false); // collision-only polish
+  for (const n of nodes) {
+    n.hx = n.x; // the settled spot is now this node's personal home
+    n.hy = n.y;
+    n.vx = 0;
+    n.vy = 0;
+  }
+  settled = true;
+  alpha = 0;
+  draw();
+
+  summary.textContent =
+    `${proj.fileCount} files · ${fmtTok(proj.totalTokens)} tokens read · ` +
+    `${proj.sessions} session${proj.sessions === 1 ? '' : 's'}` +
+    (nodes.length < proj.fileCount ? ` · largest ${Math.min(MAX_BUBBLES, proj.fileCount)} as bubbles, rest merged per directory` : '');
+}
+
+// Right-hand detail panel for the codebase map: filled by clicking a
+// bubble; the placeholder doubles as the interaction hint.
+function renderMapDetail(n, proj) {
+  const box = $('map-detail');
+  box.replaceChildren();
+  const kv = (k, v) => {
+    const r = el('div', 'md-row');
+    r.append(el('span', null, k), el('b', null, v));
+    return r;
+  };
+  if (!n) {
+    box.append(el('div', 'md-hint',
+      'Click a bubble for details.\n\nDrag to rearrange — dropping pins a bubble in place, double-click unpins it.'));
+    return;
+  }
+  const f = n.f;
+  const share = proj.totalTokens > 0 ? (f.tokens / proj.totalTokens) * 100 : 0;
+  if (f.merged) {
+    box.append(
+      el('div', 'md-name', f.rel),
+      el('div', 'md-path', `${n.group} — files below the bubble cut`),
+      kv('tokens read', fmtTok(f.tokens)),
+      kv('share of project', share.toFixed(1) + '%'),
+      kv('reads', String(f.reads)),
+      kv('files merged', String(f.tailFiles.length)),
+    );
+    const list = el('div', 'md-list');
+    for (const t of f.tailFiles.slice(0, 15)) {
+      list.append(kv(t.rel.split('\\').pop(), fmtTok(t.tokens)));
+    }
+    if (f.tailFiles.length > 15) {
+      list.append(el('div', 'md-hint', `… and ${f.tailFiles.length - 15} more`));
+    }
+    box.append(list);
+    return;
+  }
+  box.append(
+    el('div', 'md-name', f.rel.split('\\').pop()),
+    el('div', 'md-path', f.rel),
+    kv('directory', n.group),
+    kv('tokens read', fmtTok(f.tokens)),
+    kv('share of project', share.toFixed(1) + '%'),
+    kv('reads', String(f.reads)),
+    kv('~ per read', fmtTok(Math.round(f.tokens / Math.max(1, f.reads)))),
+    kv('sessions', String(f.sessions || 1)),
+    kv('read by agents', f.agent ? 'yes' : 'no'),
+  );
+  if (f.reads >= 3) {
+    box.append(el('div', 'md-hint',
+      'Re-read several times — a focused doc covering this file could make re-checks cheaper (see Optimize).'));
+  }
+}
+
+async function fetchFileMap(force) {
+  if (!force && Date.now() - state.fileMapFetched < 15000) return;
+  state.fileMapFetched = Date.now();
+  try {
+    const res = await fetch('/api/filemap');
+    if (res.ok) {
+      state.fileMap = await res.json();
+      if (state.view === 'map') renderMap();
+    }
+  } catch { /* collector restarting */ }
+}
+
 async function fetchTrends(force) {
   if (!force && Date.now() - state.trendsFetched < 15000) return;
   state.trendsFetched = Date.now();
@@ -1224,15 +1619,19 @@ function render() {
   $('docs-btn').classList.toggle('active', state.view === 'docs');
   $('mcp-btn').classList.toggle('active', state.view === 'mcp');
   $('trends-btn').classList.toggle('active', state.view === 'trends');
+  $('map-btn').classList.toggle('active', state.view === 'map');
   $('report').hidden = state.view !== 'docs';
   $('mcp-report').hidden = state.view !== 'mcp';
   $('trends-report').hidden = state.view !== 'trends';
+  $('map-report').hidden = state.view !== 'map';
+  if (state.view !== 'map') stopMapSim();
   if (state.view !== 'session') {
     $('empty').hidden = true;
     $('detail').hidden = true;
     if (state.view === 'docs') renderReport();
     else if (state.view === 'mcp') renderMcpReport();
-    else renderTrends();
+    else if (state.view === 'trends') renderTrends();
+    else renderMap();
   } else {
     renderDetail();
   }
@@ -1261,6 +1660,17 @@ $('trends-btn').onclick = () => {
   $('trends-btn').blur();
 };
 
+$('map-btn').onclick = () => {
+  state.view = state.view === 'map' ? 'session' : 'map';
+  if (state.view === 'map') fetchFileMap(true);
+  render();
+  $('map-btn').blur();
+};
+
+window.addEventListener('resize', () => {
+  if (state.view === 'map') renderMap();
+});
+
 // ---- SSE ----
 
 let hookFade;
@@ -1276,6 +1686,7 @@ es.onmessage = (msg) => {
     if (state.view === 'docs') fetchReport(false);
     if (state.view === 'mcp') fetchMcpReport(false);
     if (state.view === 'trends') fetchTrends(false);
+    if (state.view === 'map') fetchFileMap(false);
     render();
   } else if (data.type === 'session') {
     state.detail[data.session.id] = data.session;

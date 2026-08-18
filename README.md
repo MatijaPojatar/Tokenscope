@@ -56,6 +56,13 @@ It runs as a local web page next to your terminal and shows, for every session:
   result added to the parent's context (matched via the spawning call's
   prompt), with a per-session compression total and an Optimize finding
   when an agent returns a fat payload instead of conclusions.
+- **Codebase map** — the `map` button renders a draggable bubble map of
+  each project: circle area = tokens spent reading that file across every
+  loaded session and agent, clustered and colored by top-level directory
+  via a small force simulation. Drag bubbles to rearrange (drop pins,
+  double-click unpins). Shows at a glance where Claude "lives" in the
+  repo and which fat files keep getting re-read. Hand-rolled physics,
+  zero dependencies.
 - **Docs across sessions** — the `docs` button aggregates every doc read by
   any session or agent in the loaded window, plus a "loaded every session ·
   never read or edited" section: the strongest observable dead-weight signal

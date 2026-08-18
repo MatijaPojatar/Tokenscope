@@ -387,6 +387,69 @@ h2 {
 .trend-row .tb div { height: 100%; border-radius: 3px; background: var(--accent); }
 .trend-row .tm { color: var(--muted); white-space: nowrap; }
 
+/* ---- codebase map ---- */
+#map-report { max-width: 1280px; }
+.map-projects { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.7rem; }
+.map-projects button {
+  font-family: var(--mono); font-size: 0.66rem;
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 0.22rem 0.6rem; cursor: pointer;
+  max-width: 18rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.map-projects button:hover { color: var(--ink); }
+.map-projects button.active { color: var(--accent); border-color: var(--accent); }
+.map-body { display: flex; gap: 0.9rem; align-items: stretch; }
+.map-canvas { position: relative; flex: 1; min-width: 0; background: var(--panel); border-radius: 8px; overflow: hidden; }
+.map-detail {
+  flex: 0 0 300px;
+  background: var(--panel); border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  font-family: var(--mono); font-size: 0.7rem;
+  overflow-y: auto;
+}
+.md-hint { color: var(--muted); font-size: 0.66rem; white-space: pre-line; }
+.md-name { font-weight: 600; font-size: 0.8rem; overflow-wrap: anywhere; }
+.md-path { color: var(--muted); font-size: 0.62rem; margin: 0.15rem 0 0.55rem; overflow-wrap: anywhere; }
+.md-row {
+  display: flex; justify-content: space-between; gap: 0.8rem;
+  padding: 0.22rem 0; border-bottom: 1px dashed var(--line);
+  color: var(--muted);
+}
+.md-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.md-row b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.md-list { margin-top: 0.55rem; }
+.md-list .md-row { font-size: 0.64rem; }
+.md-list .md-hint { margin-top: 0.3rem; }
+.map-detail > .md-hint:last-child { margin-top: 0.55rem; }
+.tm-cell {
+  position: absolute; top: 0; left: 0;
+  border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 0.58rem; line-height: 1.2;
+  color: rgba(10, 16, 22, 0.85);
+  text-align: center; overflow: hidden;
+  cursor: grab; user-select: none; touch-action: none;
+  will-change: transform;
+}
+.tm-cell .tm-name {
+  max-width: 90%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tm-cell .tm-tok { font-size: 0.55rem; opacity: 0.75; }
+.tm-cell:hover { box-shadow: 0 0 0 1px var(--ink); z-index: 2; }
+.tm-cell.dragging { cursor: grabbing; z-index: 3; }
+.tm-cell.pinned { box-shadow: 0 0 0 2px var(--accent); }
+.tm-cell.selected { box-shadow: 0 0 0 2px var(--ink); z-index: 2; }
+.tm-cell.selected.pinned { box-shadow: 0 0 0 2px var(--ink), 0 0 0 4px var(--accent); }
+.map-legend {
+  display: flex; flex-wrap: wrap; gap: 0.3rem 0.95rem;
+  font-family: var(--mono); font-size: 0.64rem; color: var(--muted);
+  margin-top: 0.6rem;
+}
+.map-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
+.map-summary { margin-top: 0.35rem; font-size: 0.66rem; color: var(--muted); }
+
 .totals { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
 .totals div { display: flex; justify-content: space-between; padding: 0.22rem 0; border-bottom: 1px dashed var(--line); }
 .totals b { color: var(--ink); font-weight: 600; }

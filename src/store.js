@@ -97,6 +97,43 @@ export class Store {
     return { read, unused };
   }
 
+  // Cross-session file map: tokens spent reading each file, grouped per
+  // project — the data behind the codebase treemap.
+  fileReport() {
+    const projects = new Map();
+    for (const s of this.sessions.values()) {
+      const files = s.mergedFileReads();
+      if (files.length === 0) continue;
+      const cwd = s.cwd || '(unknown)';
+      const pk = cwd.toLowerCase();
+      const proj = projects.get(pk) || { cwd, files: new Map(), sessions: 0 };
+      proj.sessions += 1;
+      for (const f of files) {
+        const k = String(f.path).replace(/\//g, '\\').toLowerCase();
+        const cur = proj.files.get(k) ||
+          { path: f.path, reads: 0, tokens: 0, sessions: 0, agent: false };
+        cur.reads += f.reads;
+        cur.tokens += f.tokens;
+        cur.sessions += 1;
+        if (f.agent) cur.agent = true;
+        proj.files.set(k, cur);
+      }
+      projects.set(pk, proj);
+    }
+    return [...projects.values()]
+      .map((p) => {
+        const all = [...p.files.values()].sort((a, b) => b.tokens - a.tokens);
+        return {
+          cwd: p.cwd,
+          sessions: p.sessions,
+          fileCount: all.length,
+          totalTokens: all.reduce((n, f) => n + f.tokens, 0),
+          files: all.slice(0, 500),
+        };
+      })
+      .sort((a, b) => b.totalTokens - a.totalTokens);
+  }
+
   // Cross-session MCP & skills report: every server call and skill use by
   // any session or agent in the window, with never-used cohorts called out —
   // the same dead-weight logic the docs report applies to base-loaded files.
