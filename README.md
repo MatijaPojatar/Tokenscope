@@ -8,7 +8,10 @@ It runs as a local web page next to your terminal and shows, for every session:
 
 - **Context gauge** — how full the context window is and what it's made of
   (base system context, conversation, docs read, code read, search results,
-  tool output, assistant output).
+  tool output, assistant output). A scrubber strip below it charts context
+  size over the whole session as stacked areas — click or drag to
+  time-travel the gauge to any moment (compactions show as dashed ticks),
+  `⏵ live` snaps back to now.
 - **Per-action cost** — every Read / Grep / Glob / Edit / agent call with the
   tokens it added to context, its timestamp, and its execution duration,
   grouped by prompt into collapsible turns.

@@ -30,6 +30,7 @@ const state = {
   fileMap: null,
   fileMapFetched: 0,
   mapProject: null, // selected project cwd on the map page
+  scrub: null, // {id, i} — session + timeline index while time-scrubbing the gauge
   turnToggles: {}, // turn key -> expanded override (survives live re-renders)
   agentToggles: {}, // agent key -> expanded
   highlight: null, // {kind, subject} from a clicked Optimize entry
@@ -235,6 +236,233 @@ function renderList() {
 
 // ---- detail ----
 
+// Jump the context scrubber to the timeline snapshot nearest a timestamp —
+// used by clickable action times in the per-action timeline. `akey` pins
+// the marker to the exact row that was clicked: nearby actions often share
+// a settle (near-identical timestamps), so deriving the row back from the
+// snapshot time could select a neighbor instead.
+function scrubToTs(s, ts, akey) {
+  const tl = s.timeline || [];
+  if (tl.length < 2 || !ts) return;
+  const target = new Date(ts).getTime();
+  let best = 0;
+  let bd = Infinity;
+  tl.forEach((p, i) => {
+    const d = Math.abs(new Date(p.ts).getTime() - target);
+    if (d < bd) { bd = d; best = i; }
+  });
+  state.scrub = { id: s.id, i: best, akey: akey || null };
+  renderGauge(s);
+  renderScrubber(s);
+  updateScrubActionMarker(s, false);
+}
+
+// Mark the action call the scrubber currently points at: the last action
+// at or before the snapshot's timestamp gets a dashed highlight, and its
+// label appears in a chip on the strip. With scrollTo, its turn is
+// expanded and the row scrolled into view (used when scrubbing ends).
+function updateScrubActionMarker(s, scrollTo) {
+  document.querySelectorAll('.arow.at-scrub').forEach((r) => r.classList.remove('at-scrub'));
+  const chip = document.getElementById('scrub-info');
+  const snap = state.scrub && state.scrub.id === s.id ? (s.timeline || [])[state.scrub.i] : null;
+  if (!snap) {
+    if (chip) chip.hidden = true;
+    return;
+  }
+  // a scrub started from a specific action pins that exact row
+  let row = state.scrub.akey
+    ? document.querySelector(`#turns .arow[data-akey="${CSS.escape(state.scrub.akey)}"]`)
+    : null;
+  if (!row) {
+    const t = new Date(snap.ts).getTime();
+    let best = null;
+    let bestTs = -Infinity;
+    let nearest = null;
+    let nd = Infinity;
+    document.querySelectorAll('#turns .arow[data-ats]').forEach((r) => {
+      const ats = new Date(r.dataset.ats).getTime();
+      if (isNaN(ats)) return;
+      if (ats <= t && ats > bestTs) { bestTs = ats; best = r; }
+      const d = Math.abs(ats - t);
+      if (d < nd) { nd = d; nearest = r; }
+    });
+    row = best || nearest;
+  }
+  if (!row) {
+    if (chip) chip.hidden = true;
+    return;
+  }
+  row.classList.add('at-scrub');
+  const label = row.querySelector('.al');
+  if (chip) {
+    chip.textContent = '⏱ ' + ((label && label.title) || 'action');
+    chip.hidden = false;
+  }
+  if (scrollTo) {
+    const turn = row.closest('.turn');
+    if (turn && turn.classList.contains('collapsed')) {
+      const akey = row.dataset.akey || '';
+      const key = akey.slice(0, akey.lastIndexOf('#'));
+      if (key) state.turnToggles[key] = true; // survives the next re-render
+      turn.classList.remove('collapsed');
+      const head = turn.querySelector('.turn-head');
+      if (head) {
+        head.setAttribute('aria-expanded', 'true');
+        const chev = head.querySelector('.chev');
+        if (chev) chev.textContent = '▾';
+      }
+    }
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+// Gauge + legend, time-travel aware: while scrubbing, composition comes
+// from the selected timeline snapshot instead of the live state.
+function renderGauge(s) {
+  const tl = s.timeline || [];
+  const snap = state.scrub && state.scrub.id === s.id ? tl[state.scrub.i] : null;
+  const used = snap ? snap.ctx : (s.contextNow || 0);
+  const win = s.window || 200000;
+  $('g-num').textContent = (snap ? `⏱ ${fmtClock(snap.ts)} · ` : '') +
+    `${fmtTok(used)} / ${fmtTok(win)} · ${Math.round((used / win) * 100)}%`;
+  const gauge = $('gauge');
+  gauge.replaceChildren();
+  const legend = $('legend');
+  legend.replaceChildren();
+  // CATS order mirrors CAT_KEYS in src/attribution.js — snapshot buckets
+  // are positional.
+  const bucket = (k, i) => (snap ? (snap.b[i] || 0) : (s.context[k] || 0));
+  const ctxSum = CATS.reduce((a, [k], i) => a + bucket(k, i), 0);
+  // Buckets are lifetime accumulation; scale them onto usage so the gauge
+  // reflects composition even after compaction shrinks the window.
+  const scale = ctxSum > 0 ? Math.min(1, used / ctxSum) : 0;
+  CATS.forEach(([k, label], i) => {
+    const v = bucket(k, i);
+    if (v <= 0) return;
+    const seg = document.createElement('div');
+    seg.style.width = ((v * scale) / win) * 100 + '%';
+    seg.style.background = catColor(k);
+    let title = `${label}: ${fmtTok(v)}`;
+    if (!snap && k === 'output' && s.outputBreakdown) {
+      const b = s.outputBreakdown;
+      title += ` — thinking ~${fmtTok(b.thinking)} · text ~${fmtTok(b.text)} · tool calls ~${fmtTok(b.toolUse)}`;
+    }
+    seg.title = title;
+    gauge.append(seg);
+    const li = el('span');
+    const sw = el('i', 'swatch');
+    sw.style.background = catColor(k);
+    li.append(sw, document.createTextNode(`${label} ${fmtTok(v)}`));
+    li.title = title;
+    legend.append(li);
+  });
+}
+
+// Stacked-area strip of context size over the session — click or drag to
+// scrub; the gauge above time-travels. Dashed ticks mark compactions.
+function renderScrubber(s) {
+  const box = $('g-scrub');
+  const tl = s.timeline || [];
+  if (tl.length < 2) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  box.replaceChildren();
+  const NS = 'http://www.w3.org/2000/svg';
+  const VW = 1000;
+  const VH = 64;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${VW} ${VH}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  const maxCtx = Math.max(...tl.map((p) => p.ctx), 1);
+  const x = (i) => (i / (tl.length - 1)) * VW;
+  const yOf = (v) => VH - (v / maxCtx) * (VH - 3);
+  // cumulative stacks, scaled like the gauge (per-snapshot fit to ctx)
+  const stacks = tl.map((p) => {
+    const sum = p.b.reduce((a, v) => a + v, 0);
+    const sc = sum > 0 ? Math.min(1, p.ctx / sum) : 0;
+    let cum = 0;
+    return p.b.map((v) => (cum += v * sc));
+  });
+  CATS.forEach(([k], c) => {
+    let d = '';
+    let any = false;
+    for (let i = 0; i < tl.length; i++) {
+      const top = stacks[i][c];
+      if (top > (c === 0 ? 0 : stacks[i][c - 1])) any = true;
+      d += `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${yOf(top).toFixed(1)}`;
+    }
+    if (!any) return;
+    for (let i = tl.length - 1; i >= 0; i--) {
+      d += `L${x(i).toFixed(1)},${yOf(c === 0 ? 0 : stacks[i][c - 1]).toFixed(1)}`;
+    }
+    const path = document.createElementNS(NS, 'path');
+    path.setAttribute('d', d + 'Z');
+    path.setAttribute('fill', catColor(k));
+    svg.append(path);
+  });
+  for (const cpt of s.compactions || []) {
+    const ct = new Date(cpt.ts).getTime();
+    let best = 0;
+    let bd = Infinity;
+    tl.forEach((p, i) => {
+      const dd = Math.abs(new Date(p.ts).getTime() - ct);
+      if (dd < bd) { bd = dd; best = i; }
+    });
+    const line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', x(best));
+    line.setAttribute('x2', x(best));
+    line.setAttribute('y1', 0);
+    line.setAttribute('y2', VH);
+    line.setAttribute('class', 'scrub-compact');
+    svg.append(line);
+  }
+  box.append(svg);
+  const cursor = el('div', 'scrub-cursor');
+  box.append(cursor);
+  const info = el('div', 'scrub-info');
+  info.id = 'scrub-info';
+  info.hidden = true;
+  box.append(info);
+  const liveBtn = el('button', 'scrub-live', '⏵ live');
+  liveBtn.onclick = (e) => {
+    e.stopPropagation();
+    state.scrub = null;
+    renderGauge(s);
+    positionCursor();
+    updateScrubActionMarker(s, false);
+  };
+  box.append(liveBtn);
+  const positionCursor = () => {
+    const on = state.scrub && state.scrub.id === s.id;
+    cursor.hidden = !on;
+    liveBtn.hidden = !on;
+    if (on) cursor.style.left = ((state.scrub.i / (tl.length - 1)) * 100) + '%';
+  };
+  positionCursor();
+  const setFromEvent = (ev) => {
+    const rect = box.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+    state.scrub = { id: s.id, i: Math.round(frac * (tl.length - 1)) };
+    renderGauge(s);
+    positionCursor();
+    updateScrubActionMarker(s, false);
+  };
+  box.addEventListener('pointerdown', (e) => {
+    if (e.target === liveBtn) return;
+    box.setPointerCapture(e.pointerId);
+    setFromEvent(e);
+    const move = (ev) => setFromEvent(ev);
+    const up = () => {
+      box.removeEventListener('pointermove', move);
+      updateScrubActionMarker(s, true); // reveal the action we landed on
+    };
+    box.addEventListener('pointermove', move);
+    box.addEventListener('pointerup', up, { once: true });
+  });
+}
+
 function renderDetail() {
   const s = state.detail[state.selected];
   $('empty').hidden = !!s;
@@ -254,38 +482,8 @@ function renderDetail() {
   const active = s.lastActivity && Date.now() - new Date(s.lastActivity).getTime() < 120000;
   $('live-dot').className = 'dot' + (active ? ' on' : '');
 
-  // gauge
-  const used = s.contextNow || 0;
-  const win = s.window || 200000;
-  $('g-num').textContent = `${fmtTok(used)} / ${fmtTok(win)} · ${Math.round((used / win) * 100)}%`;
-  const gauge = $('gauge');
-  gauge.replaceChildren();
-  const legend = $('legend');
-  legend.replaceChildren();
-  const ctxSum = CATS.reduce((a, [k]) => a + (s.context[k] || 0), 0);
-  // Buckets are lifetime accumulation; scale them onto current usage so the
-  // gauge reflects composition even after compaction shrinks the window.
-  const scale = ctxSum > 0 ? Math.min(1, used / ctxSum) : 0;
-  for (const [k, label] of CATS) {
-    const v = s.context[k] || 0;
-    if (v <= 0) continue;
-    const seg = document.createElement('div');
-    seg.style.width = ((v * scale) / win) * 100 + '%';
-    seg.style.background = catColor(k);
-    let title = `${label}: ${fmtTok(v)}`;
-    if (k === 'output' && s.outputBreakdown) {
-      const b = s.outputBreakdown;
-      title += ` — thinking ~${fmtTok(b.thinking)} · text ~${fmtTok(b.text)} · tool calls ~${fmtTok(b.toolUse)}`;
-    }
-    seg.title = title;
-    gauge.append(seg);
-    const li = el('span');
-    const sw = el('i', 'swatch');
-    sw.style.background = catColor(k);
-    li.append(sw, document.createTextNode(`${label} ${fmtTok(v)}`));
-    li.title = title;
-    legend.append(li);
-  }
+  renderGauge(s);
+  renderScrubber(s);
 
   // compaction history + growth forecast under the gauge
   const comps = s.compactions || [];
@@ -371,6 +569,7 @@ function renderDetail() {
     for (const [ai, a] of t.actions.entries()) {
       const row = el('div', 'arow' + (actionMatches(state.highlight, a) ? ' hl' : ''));
       row.dataset.akey = `${key}#${ai}`;
+      if (a.ts) row.dataset.ats = a.ts;
       const found = findingFor(a);
       if (found) {
         row.classList.add('opt');
@@ -393,9 +592,19 @@ function renderDetail() {
           a.durMs != null ? fmtMs(a.durMs) : null,
           a.genTokens != null ? `~${fmtTok(a.genTokens)} out` : null,
         ].filter(Boolean).join(' · '));
+      const titleBits = [];
       if (a.genTokens != null) {
-        time.title = `~${fmtTok(a.genTokens)} output tokens to issue this call (payload + its share of the message’s thinking)`;
+        titleBits.push(`~${fmtTok(a.genTokens)} output tokens to issue this call (payload + its share of the message’s thinking)`);
       }
+      if (a.ts && (s.timeline || []).length >= 2) {
+        time.classList.add('tclick');
+        titleBits.push('click to scrub the context gauge to this moment');
+        time.onclick = (e) => {
+          e.stopPropagation(); // don't trigger the row's Optimize-focus click
+          scrubToTs(s, a.ts, row.dataset.akey);
+        };
+      }
+      if (titleBits.length) time.title = titleBits.join(' — ');
       row.append(label, time, bar, el('span', 'anum', '+' + fmtTok(a.tokens)));
       actionsBox.append(row);
     }
@@ -945,6 +1154,9 @@ function renderDetail() {
     r.append(el('span', null, k), el('b', null, v));
     totalsBox.append(r);
   }
+
+  // rows were just rebuilt — re-apply the scrub-position marker
+  updateScrubActionMarker(s, false);
 }
 
 function renderReport() {

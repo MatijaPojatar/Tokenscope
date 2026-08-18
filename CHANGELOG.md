@@ -7,6 +7,19 @@ versions follow [SemVer](https://semver.org).
 
 ### Added
 
+- **Context timeline scrubber.** A stacked-area strip under the gauge
+  charts context size and composition across the whole session (one
+  snapshot per API call, downsampled to ≤300 points). Click or drag to
+  scrub — the gauge, legend, and counter time-travel to that moment
+  (`⏱ 12:34:56` prefix); compactions appear as dashed ticks on the
+  strip; `⏵ live` returns to the present. The scrubber and the
+  per-action timeline are linked both ways: clicking an action's
+  timestamp scrubs the gauge to that moment, and the scrubber marks the
+  action call its position corresponds to — a dashed highlight on the
+  row, the action's label in a chip on the strip, and (when a scrub
+  ends) the row's turn expanded and scrolled into view. Hand-rolled SVG,
+  zero dependencies.
+
 - **Codebase map.** A `map` button opens a draggable bubble map per
   project: circle area = tokens spent reading that file, aggregated
   across every loaded session and agent (all Reads — code and docs —

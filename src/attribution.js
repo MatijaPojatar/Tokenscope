@@ -17,6 +17,11 @@ const CHARS_PER_TOKEN = 3.8;
 const MAX_TURNS = 200;
 const DEFAULT_WINDOW = 200000;
 
+// Bucket order for timeline snapshots — mirrored by CATS in public/app.js;
+// the two must stay in sync.
+const CAT_KEYS = ['base', 'conversation', 'docsRead', 'codeRead', 'search',
+  'agent', 'toolOther', 'attachments', 'output', 'recache'];
+
 const est = (chars) => Math.max(1, Math.round(chars / CHARS_PER_TOKEN));
 
 // Full path, made relative to the session cwd when it's inside the project —
@@ -127,6 +132,7 @@ export class SessionModel {
     this.seenApiLines = new Set(); // line uuids — resumes re-append old lines
     this.apiOutput = new Map(); // apiId -> {textChars, tools: [{id, chars}], output}
     this.cache = { read: 0, write: 0, write5m: 0, write1h: 0, input: 0 }; // from usage
+    this.timeline = []; // {ts, ctx, b: [per-CAT_KEYS bucket]} — one per settle
   }
 
   currentTurn() {
@@ -415,6 +421,23 @@ export class SessionModel {
     this.contextNow = u.cacheRead + u.cacheWrite + u.input + u.output;
     this.maxContext = Math.max(this.maxContext, this.contextNow);
     this.window = this.maxContext > 210000 ? 1000000 : DEFAULT_WINDOW;
+    this.timeline.push({
+      ts: this.lastActivity,
+      ctx: this.contextNow,
+      b: CAT_KEYS.map((k) => this.context[k] || 0),
+    });
+  }
+
+  // Timeline for the scrubber — downsampled evenly so the payload stays
+  // small on very long sessions; first and last snapshots always survive.
+  timelineSample() {
+    const tl = this.timeline;
+    const MAX = 300;
+    if (tl.length <= MAX) return tl;
+    const out = [];
+    const stepN = (tl.length - 1) / (MAX - 1);
+    for (let i = 0; i < MAX; i++) out.push(tl[Math.round(i * stepN)]);
+    return out;
   }
 
   // One skill invocation — via the Skill tool (action carries its result
@@ -943,6 +966,7 @@ export class SessionModel {
       turns: this.turns.slice(-60),
       compactions: this.compactions,
       forecast: this.forecast(),
+      timeline: this.timelineSample(),
       cacheEconomics: this.cacheEconomics(),
       mcpSkills: this.mcpSkillsReport(),
       docs: this.mergedDocs().slice(0, 30),
