@@ -116,6 +116,9 @@ export class SessionModel {
     this.mcpUses = new Map(); // server -> {server, calls, actions: [], tools: Set, lastTs}
     this.toolSearchUses = { calls: 0, actions: [] }; // deferred tool schema loads
     this.mcpConfigured = null; // disk-scanned MCP server config (set by the store)
+    this.outputChars = { thinking: 0, text: 0, toolUse: 0 }; // from content blocks
+    this.seenApiLines = new Set(); // line uuids — resumes re-append old lines
+    this.apiOutput = new Map(); // apiId -> {textChars, tools: [{id, chars}], output}
   }
 
   currentTurn() {
@@ -205,6 +208,8 @@ export class SessionModel {
           if (cat === 'agent' && input && typeof input.prompt === 'string') {
             action.agentPrompt = input.prompt.slice(0, 240);
           }
+          const gen = this.genCostFor(r.toolUseId);
+          if (gen != null) action.genTokens = gen;
           turn.actions.push(action);
           if (name.startsWith('mcp__')) {
             const parts = name.split('__');
@@ -288,9 +293,28 @@ export class SessionModel {
         }
         // Register issued tool calls on every line — content blocks of one
         // API message arrive as separate lines sharing the same apiId.
+        // Output chars are counted once per line uuid: session resumes
+        // re-append old lines verbatim and would double-count otherwise.
+        const newLine = !evt.uuid || !this.seenApiLines.has(evt.uuid);
+        if (evt.uuid) this.seenApiLines.add(evt.uuid);
+        let apiRec = this.apiOutput.get(evt.apiId);
+        if (!apiRec) {
+          apiRec = { textChars: 0, tools: [], output: 0 };
+          this.apiOutput.set(evt.apiId, apiRec);
+        }
         for (const b of evt.blocks) {
           if (b.type === 'tool_use' && b.id) {
-            this.toolUses.set(b.id, { name: b.name, input: b.input, ts: evt.timestamp });
+            this.toolUses.set(b.id, { name: b.name, input: b.input, ts: evt.timestamp, apiId: evt.apiId });
+            if (newLine) {
+              const chars = JSON.stringify(b.input || {}).length;
+              this.outputChars.toolUse += chars;
+              apiRec.tools.push({ id: b.id, chars });
+            }
+          } else if (newLine && b.type === 'thinking') {
+            this.outputChars.thinking += b.chars;
+          } else if (newLine && b.type === 'text') {
+            this.outputChars.text += b.chars;
+            apiRec.textChars += b.chars;
           }
         }
         if (this.seenApi.has(evt.apiId)) return; // usage already settled
@@ -298,6 +322,7 @@ export class SessionModel {
         if (evt.model) this.model = evt.model;
         const u = evt.usage;
         if (!u) return;
+        apiRec.output = u.output;
         this.settle(u);
         return;
       }
@@ -508,6 +533,54 @@ export class SessionModel {
     if (!a.title && evt.kind === 'prompt') a.title = evt.text.slice(0, 100);
     a.addEvent(evt);
     if (evt.timestamp) this.lastActivity = evt.timestamp;
+  }
+
+  // Output tokens spent issuing one tool call: its payload estimate plus an
+  // even share of its API message's thinking remainder (thinking preceded
+  // all of a message's parallel calls jointly, so an even split is the
+  // least-wrong attribution). Tool results arrive only after the message
+  // completed, so the message's blocks are fully accumulated by then.
+  genCostFor(toolUseId) {
+    const tu = this.toolUses.get(toolUseId);
+    if (!tu || !tu.apiId) return null;
+    const rec = this.apiOutput.get(tu.apiId);
+    if (!rec || rec.tools.length === 0) return null;
+    const i = rec.tools.findIndex((t) => t.id === toolUseId);
+    if (i < 0) return null;
+    const tok = (chars) => (chars > 0 ? est(chars) : 0);
+    const payloads = rec.tools.map((t) => tok(t.chars));
+    const sum = tok(rec.textChars) + payloads.reduce((a, b) => a + b, 0);
+    let scale = 1;
+    let thinking = 0;
+    if (rec.output > 0) {
+      if (sum > rec.output) scale = rec.output / sum;
+      else thinking = rec.output - sum;
+    }
+    return Math.round(payloads[i] * scale + thinking / rec.tools.length);
+  }
+
+  // Output composition. Visible text and tool-call payloads are measured
+  // from content blocks; thinking is the remainder of usage output_tokens,
+  // since recent transcripts persist only thinking signatures, not text.
+  outputBreakdown() {
+    const out = this.totals.output;
+    if (!out) return null;
+    const tok = (chars) => (chars > 0 ? est(chars) : 0);
+    let text = tok(this.outputChars.text);
+    let toolUse = tok(this.outputChars.toolUse);
+    // Estimates can overshoot the measured total (char-ratio noise) — fit
+    // them and let thinking be what's genuinely left.
+    if (text + toolUse > out) {
+      const scale = out / (text + toolUse);
+      text = Math.round(text * scale);
+      toolUse = Math.round(toolUse * scale);
+    }
+    return {
+      text,
+      toolUse,
+      thinking: Math.max(0, out - text - toolUse),
+      thinkingMeasured: this.outputChars.thinking > 0,
+    };
   }
 
   // Context-growth forecast: median fresh+output over recent completed
@@ -740,6 +813,7 @@ export class SessionModel {
       contextNow: this.contextNow,
       context: this.context,
       totals: this.totals,
+      outputBreakdown: this.outputBreakdown(),
       sidechain: this.sidechain,
       costUsd: this.costUsd ?? (this.exactCostUsd > 0 ? this.exactCostUsd : null),
       turns: this.turns.slice(-60),
@@ -766,7 +840,7 @@ export class SessionModel {
         actions: a.turns
           .flatMap((t) => t.actions)
           .slice(-200)
-          .map((x) => ({ label: x.label, cat: x.cat, tokens: x.tokens, ts: x.ts, durMs: x.durMs })),
+          .map((x) => ({ label: x.label, cat: x.cat, tokens: x.tokens, ts: x.ts, durMs: x.durMs, genTokens: x.genTokens })),
       })),
     };
   }

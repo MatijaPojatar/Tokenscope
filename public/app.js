@@ -261,12 +261,18 @@ function renderDetail() {
     const seg = document.createElement('div');
     seg.style.width = ((v * scale) / win) * 100 + '%';
     seg.style.background = catColor(k);
-    seg.title = `${label}: ${fmtTok(v)}`;
+    let title = `${label}: ${fmtTok(v)}`;
+    if (k === 'output' && s.outputBreakdown) {
+      const b = s.outputBreakdown;
+      title += ` — thinking ~${fmtTok(b.thinking)} · text ~${fmtTok(b.text)} · tool calls ~${fmtTok(b.toolUse)}`;
+    }
+    seg.title = title;
     gauge.append(seg);
     const li = el('span');
     const sw = el('i', 'swatch');
     sw.style.background = catColor(k);
     li.append(sw, document.createTextNode(`${label} ${fmtTok(v)}`));
+    li.title = title;
     legend.append(li);
   }
 
@@ -371,7 +377,14 @@ function renderDetail() {
       fill.style.background = catColor(a.cat);
       bar.append(fill);
       const time = el('span', 'atime',
-        [fmtClock(a.ts), a.durMs != null ? fmtMs(a.durMs) : null].filter(Boolean).join(' · '));
+        [
+          fmtClock(a.ts),
+          a.durMs != null ? fmtMs(a.durMs) : null,
+          a.genTokens != null ? `~${fmtTok(a.genTokens)} out` : null,
+        ].filter(Boolean).join(' · '));
+      if (a.genTokens != null) {
+        time.title = `~${fmtTok(a.genTokens)} output tokens to issue this call (payload + its share of the message’s thinking)`;
+      }
       row.append(label, time, bar, el('span', 'anum', '+' + fmtTok(a.tokens)));
       actionsBox.append(row);
     }
@@ -840,11 +853,14 @@ function renderDetail() {
         dot.style.background = catColor(x.cat);
         const lbl = el('span', 'aal', x.label);
         lbl.title = x.label + (x.ts ? ` · ${fmtClock(x.ts)}` : '');
-        r.append(
-          dot, lbl,
-          el('span', 'adur', x.durMs != null ? fmtMs(x.durMs) : ''),
-          el('span', 'anum', '+' + fmtTok(x.tokens)),
-        );
+        const adur = el('span', 'adur', [
+          x.durMs != null ? fmtMs(x.durMs) : null,
+          x.genTokens != null ? `~${fmtTok(x.genTokens)} out` : null,
+        ].filter(Boolean).join(' · '));
+        if (x.genTokens != null) {
+          adur.title = `~${fmtTok(x.genTokens)} output tokens to issue this call (payload + thinking share)`;
+        }
+        r.append(dot, lbl, adur, el('span', 'anum', '+' + fmtTok(x.tokens)));
         list.append(r);
       }
       if (!list.childElementCount) list.append(el('div', 'ds', 'no tool calls'));
@@ -863,6 +879,13 @@ function renderDetail() {
     ['subagent calls', String(s.sidechain.calls)],
     ['subagent tokens', fmtTok(s.sidechain.tokens)],
   ];
+  const ob = s.outputBreakdown;
+  if (ob) {
+    rows.splice(3, 0,
+      [`↳ thinking${ob.thinkingMeasured ? '' : ' (est.)'}`, '~' + fmtTok(ob.thinking)],
+      ['↳ visible text', '~' + fmtTok(ob.text)],
+      ['↳ tool calls', '~' + fmtTok(ob.toolUse)]);
+  }
   for (const [k, v] of rows) {
     const r = el('div');
     r.append(el('span', null, k), el('b', null, v));

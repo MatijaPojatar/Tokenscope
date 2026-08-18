@@ -5,7 +5,7 @@
 // parseLine(line) returns one of the normalized events below, or null for
 // lines we don't care about (queue ops, file snapshots, unknown types).
 //
-//   { kind: 'api',          apiId, model, timestamp, isSidechain, promptId,
+//   { kind: 'api',          apiId, uuid, model, timestamp, isSidechain, promptId,
 //                           usage: {input, cacheWrite, cacheRead, output},
 //                           blocks: [{type:'tool_use', id, name, input} | {type, chars}] }
 //   { kind: 'prompt',       text, chars, timestamp, promptId, isSidechain, cwd,
@@ -77,6 +77,10 @@ export function parseLine(line) {
       for (const b of m.content || []) {
         if (b.type === 'tool_use') {
           blocks.push({ type: 'tool_use', id: b.id, name: b.name, input: b.input });
+        } else if (b.type === 'thinking' || b.type === 'redacted_thinking') {
+          // Recent transcripts persist only the signature, not the thinking
+          // text — chars stay 0 then and thinking is inferred from usage.
+          blocks.push({ type: 'thinking', chars: typeof b.thinking === 'string' ? b.thinking.length : 0 });
         } else {
           blocks.push({ type: b.type, chars: typeof b.text === 'string' ? b.text.length : 0 });
         }
@@ -84,6 +88,7 @@ export function parseLine(line) {
       return {
         kind: 'api',
         apiId: m.id,
+        uuid: e.uuid,
         model: m.model,
         timestamp: e.timestamp,
         isSidechain: !!e.isSidechain,

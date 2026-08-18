@@ -60,6 +60,12 @@ It runs as a local web page next to your terminal and shows, for every session:
   any session or agent in the loaded window, plus a "loaded every session ·
   never read or edited" section: the strongest observable dead-weight signal
   for `@`-imported docs.
+- **Output breakdown** — session output split into thinking, visible text,
+  and tool-call payloads. Text and tool sizes are measured from content
+  blocks; thinking is the remainder of the usage's output tokens, since
+  recent transcripts persist only thinking signatures, not the text. Every
+  tool call in the timeline also shows `~X out`: what it cost to issue —
+  its payload plus an even share of its API message's thinking.
 - **Cost & rate limits** — session USD cost and account rate-limit fill, fed
   by the statusline integration below.
 

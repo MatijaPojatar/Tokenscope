@@ -32,6 +32,15 @@ versions follow [SemVer](https://semver.org).
   session-wide burned → returned total, and an Optimize finding when an
   agent returns ≥5k tokens instead of conclusions (clickable to its call
   in the timeline).
+- **Output-side breakdown.** Session output tokens split into thinking,
+  visible text, and tool-call payloads — as sub-rows in Session totals and
+  in the output segment's gauge/legend tooltip. Text and tool-call sizes
+  are measured from assistant content blocks (deduplicated by line uuid,
+  since session resumes re-append old lines); thinking is the remainder of
+  measured output tokens, as transcripts persist only thinking signatures.
+  Every tool call in the timeline (session and agent) additionally shows
+  `~X out` — the output spent issuing it: its payload estimate plus an
+  even share of its API message's thinking remainder.
 - **MCP & skills across sessions** — an `mcp` button (next to `docs`)
   opens a cross-session report: per-server calls, tokens, and session
   counts; per-skill uses and listing shares; and the dead-weight cohorts
