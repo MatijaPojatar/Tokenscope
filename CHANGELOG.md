@@ -16,6 +16,14 @@ versions follow [SemVer](https://semver.org).
   session at a time; 5-minute timeout; errors surface in the header, and
   a `cancel` button kills the running CLI (full process tree). Endpoints:
   `POST` / `DELETE /api/session/:id/context-file`.
+- **Optimize-plan generation.** A `generate plan` button atop the Optimize
+  panel feeds every finding — plus supporting facts (base files, unused
+  skills, most-read files, cache waste, compactions) — to the same local
+  CLI flow, producing a prioritized action plan (exact file edits, docs to
+  write, skills to package, expected savings from the measured numbers)
+  saved as `.claude\context\optimize-plan-<id>-<stamp>.md`. Shares the
+  one-at-a-time/cancel machinery. Endpoints: `POST` / `DELETE
+  /api/session/:id/optimize-plan`.
 
 ## [0.5.0] — 2026-08-18
 

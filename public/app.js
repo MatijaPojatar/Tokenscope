@@ -32,6 +32,7 @@ const state = {
   mapProject: null, // selected project cwd on the map page
   scrub: null, // {id, i} — session + timeline index while time-scrubbing the gauge
   ctxGen: {}, // session id -> {running, msg} — context-file generation status
+  planGen: {}, // session id -> {running, msg} — optimize-plan generation status
   turnToggles: {}, // turn key -> expanded override (survives live re-renders)
   agentToggles: {}, // agent key -> expanded
   highlight: null, // {kind, subject} from a clicked Optimize entry
@@ -780,6 +781,40 @@ function renderDetail() {
   const suggRows = $('sugg-rows');
   suggRows.replaceChildren();
   suggWrap.hidden = allSuggs.length === 0;
+
+  // plan generation: findings → the local claude CLI → an action plan file
+  if (allSuggs.length > 0) {
+    const pg = state.planGen[s.id];
+    const bar = el('div', 'plan-bar');
+    const planBtn = el('button', 'ctx-btn', 'generate plan');
+    planBtn.title = 'Have your local claude CLI turn these findings into a prioritized optimization plan (billed to your account), saved under the project’s .claude\\context\\';
+    planBtn.disabled = !!(pg && pg.running);
+    planBtn.onclick = async () => {
+      if (state.planGen[s.id] && state.planGen[s.id].running) return;
+      state.planGen[s.id] = { running: true, msg: 'generating plan via local claude CLI — can take a minute…' };
+      renderDetail();
+      try {
+        const res = await fetch(`/api/session/${s.id}/optimize-plan`, { method: 'POST' });
+        const j = await res.json();
+        state.planGen[s.id] = {
+          running: false,
+          msg: j.ok ? `saved → ${j.path}` : j.canceled ? 'canceled' : `failed: ${j.error}`,
+        };
+      } catch {
+        state.planGen[s.id] = { running: false, msg: 'failed: collector unreachable' };
+      }
+      if (state.selected === s.id && state.view === 'session') renderDetail();
+    };
+    const planCancel = el('button', 'ctx-btn', 'cancel');
+    planCancel.hidden = !(pg && pg.running);
+    planCancel.onclick = () => {
+      fetch(`/api/session/${s.id}/optimize-plan`, { method: 'DELETE' }).catch(() => {});
+    };
+    bar.append(planBtn, planCancel);
+    if (pg && pg.msg) bar.append(el('span', 'mono ctx-status', pg.msg));
+    suggRows.append(bar);
+  }
+
   const expandedSuggs = !!state.suggExpanded[s.id];
   const suggs = expandedSuggs ? allSuggs : cappedSuggs(allSuggs);
   for (const g of suggs) {

@@ -134,6 +134,10 @@ body {
 .ctx-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
 .ctx-btn:disabled { opacity: 0.55; cursor: wait; }
 .ctx-status { color: var(--muted); overflow-wrap: anywhere; }
+.plan-bar {
+  display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
+  margin-bottom: 0.55rem; font-size: 0.66rem;
+}
 
 .gauge-label {
   display: flex; justify-content: space-between;

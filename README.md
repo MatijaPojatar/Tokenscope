@@ -27,7 +27,9 @@ It runs as a local web page next to your terminal and shows, for every session:
   (→ trim hook output), always-loaded base files (→ move out of `@`-imports),
   cache re-writes after idle gaps, and repeated commands (→ package as a
   skill or hook). Clicking a finding highlights its calls in the timeline,
-  and clicking a flagged call focuses its finding.
+  and clicking a flagged call focuses its finding. A `generate plan`
+  button turns the findings into a prioritized action plan via your local
+  `claude` CLI, saved under the project's `.claude\context\`.
 - **Compaction** — every compaction event, measured from the transcript:
   context size before → after, tokens of history dropped, what the summary
   and the context rebuild re-paid, trigger and duration. Boundaries appear

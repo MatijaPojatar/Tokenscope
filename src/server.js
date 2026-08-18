@@ -78,6 +78,21 @@ Be specific and use the file paths from the digest. Do not invent facts that
 are not supported by the digest. Keep it under ~2500 words. Output ONLY the
 markdown document — no preamble.`;
 
+const PLAN_PROMPT = `You are writing an optimization plan for a Claude Code
+project. Below is a digest of measured token-spend findings from one session,
+plus supporting facts (base files, unused skills, most-read files, cache
+waste). Produce a concrete, prioritized action plan that reduces context cost
+in future sessions.
+
+For each planned item: name the finding it addresses, spell out the exact
+change — the file to edit or create with its path, what moves where (CLAUDE.md
+trims or moves to on-demand docs, docs to write with a 3-5 bullet outline, a
+skill to package with a short SKILL.md sketch, hook output to trim, plugins or
+skills to disable, or workflow changes such as fresh sessions per task) — and
+the expected saving using the measured numbers from the digest. Order by
+impact. Do not invent facts not supported by the digest. Keep it under ~2000
+words. Output ONLY the markdown plan — no preamble.`;
+
 const ctxInFlight = new Map(); // session id -> {child, canceled}
 
 // With shell:true the direct child is a shell shim — kill the whole tree
@@ -91,7 +106,7 @@ function killTree(child) {
   }
 }
 
-function generateContextFile(s, dataDir, holder) {
+function runClaudeToFile(s, dataDir, holder, prompt, payload, filePrefix) {
   return new Promise((resolve, reject) => {
     const cwdOk = s.cwd && fs.existsSync(s.cwd);
     const child = spawn('claude', ['-p'], {
@@ -126,14 +141,14 @@ function generateContextFile(s, dataDir, holder) {
         const dir = path.join(cwdOk ? s.cwd : dataDir, '.claude', 'context');
         await fsp.mkdir(dir, { recursive: true });
         const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-        const file = path.join(dir, `session-${s.id.slice(0, 8)}-${stamp}.md`);
+        const file = path.join(dir, `${filePrefix}-${s.id.slice(0, 8)}-${stamp}.md`);
         await fsp.writeFile(file, out.trim() + '\n');
         resolve({ ok: true, path: file, bytes: out.trim().length });
       } catch (e) {
         reject(e);
       }
     });
-    child.stdin.end(CTX_PROMPT + '\n\n---\n\n' + s.contextDigest());
+    child.stdin.end(prompt + '\n\n---\n\n' + payload);
   });
 }
 
@@ -207,8 +222,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname.startsWith('/api/session/') && url.pathname.endsWith('/context-file') && req.method === 'POST') {
-    const id = url.pathname.slice('/api/session/'.length, -'/context-file'.length);
+  // Context-file and optimize-plan generation share one flow: build a
+  // digest, run the local claude CLI headlessly, write the result under
+  // the project's .claude\context. One generation per session at a time.
+  const genMatch = url.pathname.match(/^\/api\/session\/(.+)\/(context-file|optimize-plan)$/);
+  if (genMatch && req.method === 'POST') {
+    const [, id, kind] = genMatch;
     const s = store.sessions.get(id);
     if (!s) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -220,10 +239,27 @@ const server = http.createServer(async (req, res) => {
       res.end('{"error":"a generation for this session is already running"}');
       return;
     }
+    let prompt;
+    let payload;
+    let prefix;
+    if (kind === 'optimize-plan') {
+      if ((s.suggestions() || []).length === 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end('{"error":"no Optimize findings for this session yet"}');
+        return;
+      }
+      prompt = PLAN_PROMPT;
+      payload = s.optimizeDigest();
+      prefix = 'optimize-plan';
+    } else {
+      prompt = CTX_PROMPT;
+      payload = s.contextDigest();
+      prefix = 'session';
+    }
     const holder = { child: null, canceled: false };
     ctxInFlight.set(id, holder);
     try {
-      const result = await generateContextFile(s, DATA, holder);
+      const result = await runClaudeToFile(s, DATA, holder, prompt, payload, prefix);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch (e) {
@@ -236,9 +272,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname.startsWith('/api/session/') && url.pathname.endsWith('/context-file') && req.method === 'DELETE') {
-    const id = url.pathname.slice('/api/session/'.length, -'/context-file'.length);
-    const holder = ctxInFlight.get(id);
+  if (genMatch && req.method === 'DELETE') {
+    const holder = ctxInFlight.get(genMatch[1]);
     res.writeHead(holder ? 200 : 404, { 'Content-Type': 'application/json' });
     if (holder) {
       holder.canceled = true;

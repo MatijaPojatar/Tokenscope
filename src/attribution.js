@@ -662,6 +662,55 @@ export class SessionModel {
     return L.join('\n');
   }
 
+  // Plain-text digest of the Optimize findings plus the supporting facts
+  // a plan needs — the input handed to the local claude CLI when
+  // generating an optimization plan.
+  optimizeDigest() {
+    const KIND = {
+      search: 'expensive search pattern',
+      reread: 'file re-read many times',
+      fatdoc: 'fat doc',
+      injected: 'heavy harness injection',
+      basefile: 'always-loaded base file',
+      skill: 'repeated command (skill candidate)',
+      skilllist: 'unused skill-listing share',
+      agentroi: 'fat agent return',
+      compact: 'repeated compaction',
+      recache: 'idle-gap recache',
+    };
+    const L = [];
+    L.push(`# Optimize digest: ${this.title || this.id}`);
+    L.push(`project: ${this.cwd || 'unknown'} · model: ${this.model || 'unknown'}`);
+    L.push(`totals: ${this.totals.calls} API calls · ${this.totals.fresh} fresh input tokens · ${this.totals.output} output tokens`);
+    const ce = this.cacheEconomics();
+    if (ce) {
+      L.push(`cache: ${(ce.hitRatio * 100).toFixed(1)}% hit ratio · idle-gap recache ${this.context.recache} tokens` +
+        (ce.priceKnown && ce.recacheUsd ? ` (~$${ce.recacheUsd.toFixed(2)})` : ''));
+    }
+    if (this.compactions.length > 0) L.push(`compactions this session: ${this.compactions.length}`);
+    L.push('', '## Findings (from measured token spend)');
+    for (const g of this.suggestions()) {
+      L.push(`- [${KIND[g.kind] || g.kind}] ${g.subject || ''} — impact ~${g.impact} tokens · ${g.count}×` +
+        (g.context ? ` · during: ${g.context}` : ''));
+    }
+    if (this.baseFiles && this.baseFiles.length > 0) {
+      L.push('', '## Base files loaded at every session start');
+      for (const f of this.baseFiles) L.push(`- ${f.label}: ${f.path} (${f.chars} chars)`);
+    }
+    const ms = this.mcpSkillsReport();
+    const unusedSkills = ms.skills.filter((x) => x.listed && x.uses === 0);
+    if (unusedSkills.length > 0) {
+      L.push('', `## Skills listed but never used (listing costs ~${ms.listingTokens} tokens/session)`);
+      for (const x of unusedSkills) L.push(`- ${x.name} (~${x.share} tok/session)`);
+    }
+    const reads = this.mergedFileReads().sort((a, b) => b.tokens - a.tokens).slice(0, 15);
+    if (reads.length > 0) {
+      L.push('', '## Most-read files');
+      for (const f of reads) L.push(`- ${f.path} (${f.tokens} tok · ${f.reads} reads)`);
+    }
+    return L.join('\n');
+  }
+
   // Compact per-session summary for the persistent rollup file — the
   // record that survives after the session leaves the live window.
   rollupSummary() {
