@@ -51,9 +51,14 @@ function parseSkillListing(text) {
 
 function normalizeUsage(u) {
   if (!u) return null;
+  // cache_creation carries the TTL split — write premium is 1.25x (5m)
+  // vs 2x (1h), so the ledger needs both when present.
+  const cc = u.cache_creation || null;
   return {
     input: u.input_tokens || 0,
     cacheWrite: u.cache_creation_input_tokens || 0,
+    cacheWrite5m: cc ? cc.ephemeral_5m_input_tokens || 0 : null,
+    cacheWrite1h: cc ? cc.ephemeral_1h_input_tokens || 0 : null,
     cacheRead: u.cache_read_input_tokens || 0,
     output: u.output_tokens || 0,
   };

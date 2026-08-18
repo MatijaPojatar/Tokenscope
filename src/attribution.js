@@ -8,6 +8,11 @@
 // items are held in `pending` and settled when the next call's usage arrives,
 // prorated by character count. cache_read is the already-paid prefix.
 
+import {
+  inputPricePerMTok, usd,
+  CACHE_READ_MULT, CACHE_WRITE_5M_MULT, CACHE_WRITE_1H_MULT,
+} from './pricing.js';
+
 const CHARS_PER_TOKEN = 3.8;
 const MAX_TURNS = 200;
 const DEFAULT_WINDOW = 200000;
@@ -120,6 +125,7 @@ export class SessionModel {
     this.outputChars = { thinking: 0, text: 0, toolUse: 0 }; // from content blocks
     this.seenApiLines = new Set(); // line uuids — resumes re-append old lines
     this.apiOutput = new Map(); // apiId -> {textChars, tools: [{id, chars}], output}
+    this.cache = { read: 0, write: 0, write5m: 0, write1h: 0, input: 0 }; // from usage
   }
 
   currentTurn() {
@@ -335,6 +341,13 @@ export class SessionModel {
 
   // Distribute one API call's fresh tokens across the pending inserted items.
   settle(u) {
+    this.cache.read += u.cacheRead;
+    this.cache.write += u.cacheWrite;
+    this.cache.input += u.input;
+    if (u.cacheWrite5m != null) {
+      this.cache.write5m += u.cacheWrite5m;
+      this.cache.write1h += u.cacheWrite1h;
+    }
     const rawFresh = u.input + u.cacheWrite;
     // The previous call's output (text + thinking) is written into the cache
     // on this call. It's already counted in the `output` bucket when it was
@@ -539,13 +552,56 @@ export class SessionModel {
     if (evt.timestamp) this.lastActivity = evt.timestamp;
   }
 
+  // Cache economics ledger. Reads bill at 0.1x the input price (savings vs
+  // sending the same tokens uncached); writes carry a premium over plain
+  // input — 1.25x at 5m TTL, 2x at 1h. Idle-gap re-writes (the recache
+  // bucket) are priced against the cache read they would have been had the
+  // entry not expired. USD figures need a known model price; token figures
+  // are always measured.
+  cacheEconomics() {
+    const c = this.cache;
+    const denom = c.read + c.write + c.input;
+    if (denom === 0) return null;
+    const price = inputPricePerMTok(this.model);
+    // Old transcripts lack the TTL split — assume the cheaper 5m premium
+    // for the unattributed remainder and say so.
+    const unsplit = Math.max(0, c.write - c.write5m - c.write1h);
+    const write5m = c.write5m + unsplit;
+    const out = {
+      read: c.read,
+      write: c.write,
+      write5m,
+      write1h: c.write1h,
+      splitAssumed: unsplit > 0,
+      input: c.input,
+      hitRatio: c.read / denom,
+      recache: this.context.recache,
+      priceKnown: price != null,
+    };
+    if (price != null) {
+      out.savedUsd = usd(c.read, price, 1 - CACHE_READ_MULT);
+      out.premiumUsd = usd(write5m, price, CACHE_WRITE_5M_MULT - 1) +
+        usd(c.write1h, price, CACHE_WRITE_1H_MULT - 1);
+      out.netUsd = out.savedUsd - out.premiumUsd;
+      const recacheMult = c.write1h > write5m ? CACHE_WRITE_1H_MULT : CACHE_WRITE_5M_MULT;
+      out.recacheUsd = usd(this.context.recache, price, recacheMult - CACHE_READ_MULT);
+    }
+    return out;
+  }
+
   // Compact per-session summary for the persistent rollup file — the
   // record that survives after the session leaves the live window.
   rollupSummary() {
     const ob = this.outputBreakdown();
+    const ce = this.cacheEconomics();
     let agentTokens = 0;
     for (const a of this.agents.values()) agentTokens += a.totals.fresh + a.totals.output;
     return {
+      cacheRead: ce ? ce.read : 0,
+      cacheWrite: ce ? ce.write : 0,
+      cacheInput: ce ? ce.input : 0,
+      cacheSavedUsd: ce && ce.priceKnown ? Math.round(ce.savedUsd * 10000) / 10000 : null,
+      cachePremiumUsd: ce && ce.priceKnown ? Math.round(ce.premiumUsd * 10000) / 10000 : null,
       v: 1,
       id: this.id,
       cwd: this.cwd,
@@ -852,6 +908,7 @@ export class SessionModel {
       turns: this.turns.slice(-60),
       compactions: this.compactions,
       forecast: this.forecast(),
+      cacheEconomics: this.cacheEconomics(),
       mcpSkills: this.mcpSkillsReport(),
       docs: this.mergedDocs().slice(0, 30),
       suggestions: this.suggestions(),

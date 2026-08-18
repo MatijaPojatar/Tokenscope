@@ -7,6 +7,15 @@ versions follow [SemVer](https://semver.org).
 
 ### Added
 
+- **Cache economics.** A per-session ledger of the prompt cache, measured
+  from usage and priced at list rates (`src/pricing.js`): hit ratio,
+  reads (0.1×) vs writes with the 5m/1h TTL split from usage (1.25×/2×),
+  dollars saved by caching vs the write premium paid, and the priced cost
+  of idle-gap re-writes — which also now appears on the recache Optimize
+  card. Cache fields join the rollup records, and the trends page totals
+  saved/premium/hit-ratio across all rolled-up sessions. Models without a
+  known list price fall back to token-only figures.
+
 - **Rollup history & trends.** Compact per-session summaries (tokens,
   cost, base size, model, compactions, agent burn, output split) are
   appended to `~\.tokenscope\rollups.jsonl` — latest snapshot per session

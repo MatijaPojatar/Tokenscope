@@ -122,6 +122,12 @@ function fmtTok(n) {
   return String(n);
 }
 
+function fmtUsd(v) {
+  if (v == null) return '–';
+  if (v > 0 && v < 0.01) return '<$0.01';
+  return (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(2);
+}
+
 function fmtClock(ts) {
   if (!ts) return '';
   const d = new Date(ts);
@@ -518,7 +524,9 @@ function renderDetail() {
       'Split into smaller focused docs so only the relevant part loads.',
     ],
     recache: (g) => [
-      `${fmtTok(g.impact)} re-cached after idle gaps (${g.count}% of input spend)`,
+      `${fmtTok(g.impact)} re-cached after idle gaps (${g.count}% of input spend)` +
+        (s.cacheEconomics && s.cacheEconomics.recacheUsd != null
+          ? ` · ~${fmtUsd(s.cacheEconomics.recacheUsd)}` : ''),
       'The prompt cache expires when a session sits idle; grouping interactions (or starting fresh sessions) avoids re-paying the whole prefix.',
     ],
     agentroi: (g) => [
@@ -632,6 +640,47 @@ function renderDetail() {
       'Dropped history is gone for the model — earlier decisions survive only in the summary turn marked ⟲ in the timeline.',
     ]);
   });
+
+  // cache economics — measured token flows priced at list rates
+  const cacheWrap = $('cache-wrap');
+  const cacheRows = $('cache-rows');
+  cacheRows.replaceChildren();
+  const ce = s.cacheEconomics;
+  cacheWrap.hidden = !ce;
+  if (ce) {
+    const C = rowAdder(cacheRows);
+    C.group('input side', ce.priceKnown
+      ? `net ${fmtUsd(ce.netUsd)} ${ce.netUsd >= 0 ? 'saved' : 'lost'}`
+      : fmtTok(ce.read + ce.write + ce.input));
+    C.row('cache|hit', 'cache hit ratio', `${(ce.hitRatio * 100).toFixed(1)}%`, () => [
+      `${fmtTok(ce.read)} read from cache · ${fmtTok(ce.write)} written · ${fmtTok(ce.input)} uncached input`,
+      (ce.write5m || ce.write1h)
+        ? `writes: ${fmtTok(ce.write5m)} at 5m TTL · ${fmtTok(ce.write1h)} at 1h TTL` +
+          (ce.splitAssumed ? ' (part assumed 5m — older lines lack the split)' : '')
+        : null,
+      'Share of all input-side tokens served from the prompt cache instead of re-sent at full price.',
+    ]);
+    if (ce.priceKnown) {
+      C.row('cache|saved', 'saved by caching', fmtUsd(ce.savedUsd), () => [
+        `${fmtTok(ce.read)} cached reads billed at 0.1× the input price instead of 1×.`,
+        'What the same tokens would have cost as plain input, minus what the cache reads actually cost.',
+      ]);
+      C.row('cache|premium', 'write premium paid', fmtUsd(ce.premiumUsd), () => [
+        'Cache writes bill above plain input — 1.25× at 5m TTL, 2× at 1h — the surcharge to make content cacheable.',
+        `Net effect this session: ${fmtUsd(ce.netUsd)} ${ce.netUsd >= 0 ? 'saved' : 'lost'}.`,
+      ]);
+      if (ce.recache > 0) {
+        C.row('cache|recache', 'idle-gap re-writes', fmtUsd(ce.recacheUsd), () => [
+          `${fmtTok(ce.recache)} tokens re-written after the cache expired — content this session had already paid for once.`,
+          'Priced against the cache read it would have been had the entry stayed warm. Grouping interactions (or a fresh session per task) avoids this.',
+        ]);
+      }
+    } else {
+      C.row('cache|noprice', 'USD estimates unavailable', '', () => [
+        `No list price on file for model "${s.model || 'unknown'}" — the token flows above are still measured.`,
+      ]);
+    }
+  }
 
   // MCP servers & skills — measured calls and results; schemas and the
   // listing are the per-session standing cost
@@ -1115,6 +1164,32 @@ function renderTrends() {
     (m) => m.model,
     (m) => `${fmtTok(m.fresh + m.output)} · ${plural(m.sessions)}` +
       (m.costUsd > 0 ? ` · $${m.costUsd.toFixed(2)}` : ''));
+
+  // cache economics across all rolled-up sessions
+  const hc = h.cache;
+  if (hc && (hc.read > 0 || hc.write > 0)) {
+    group('cache economics', hc.pricedSessions > 0
+      ? `net ${fmtUsd(hc.savedUsd - hc.premiumUsd)} saved`
+      : '');
+    const cacheStats = [
+      ['hit ratio', `${(hc.hitRatio * 100).toFixed(1)}%`,
+        'read ÷ (read + written + uncached input) across all sessions'],
+      ['read from cache', `${fmtTok(hc.read)} · billed at 0.1×`],
+      ['written to cache', `${fmtTok(hc.write)} · billed at 1.25–2×`],
+      ['uncached input', fmtTok(hc.input)],
+    ];
+    if (hc.pricedSessions > 0) {
+      cacheStats.push(
+        ['saved by caching', fmtUsd(hc.savedUsd), `across ${plural(hc.pricedSessions)} with a known model price`],
+        ['write premium paid', fmtUsd(hc.premiumUsd)]);
+    }
+    for (const [name, meta, title] of cacheStats) {
+      const r = el('div', 'doc-row report-row');
+      r.append(el('span', 'dp', name), el('span', 'ds', meta));
+      if (title) r.title = title;
+      box.append(r);
+    }
+  }
 }
 
 async function fetchTrends(force) {

@@ -74,7 +74,16 @@ export class RollupStore {
     const days = new Map();
     const projects = new Map();
     const models = new Map();
+    const cache = { read: 0, write: 0, input: 0, savedUsd: 0, premiumUsd: 0, pricedSessions: 0 };
     for (const r of map.values()) {
+      cache.read += r.cacheRead || 0;
+      cache.write += r.cacheWrite || 0;
+      cache.input += r.cacheInput || 0;
+      if (typeof r.cacheSavedUsd === 'number') {
+        cache.savedUsd += r.cacheSavedUsd;
+        cache.premiumUsd += r.cachePremiumUsd || 0;
+        cache.pricedSessions += 1;
+      }
       const day = localDay(r.last);
       if (!day) continue;
       const d = days.get(day) ||
@@ -126,8 +135,12 @@ export class RollupStore {
       delete d.baseSessions;
     }
 
+    const cacheDenom = cache.read + cache.write + cache.input;
+    cache.hitRatio = cacheDenom > 0 ? cache.read / cacheDenom : 0;
+
     return {
       totalSessions: map.size,
+      cache,
       days: filled,
       projects: [...projects.values()]
         .sort((a, b) => (b.fresh + b.output) - (a.fresh + a.output)).slice(0, 20),

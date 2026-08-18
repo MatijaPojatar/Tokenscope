@@ -68,6 +68,13 @@ It runs as a local web page next to your terminal and shows, for every session:
   its payload plus an even share of its API message's thinking.
 - **Cost & rate limits** — session USD cost and account rate-limit fill, fed
   by the statusline integration below.
+- **Cache economics** — a per-session ledger of the prompt cache, measured
+  from usage: hit ratio, tokens read (billed 0.1×) vs written (1.25× at 5m
+  TTL, 2× at 1h — the split comes from usage), dollars saved by caching vs
+  the write premium paid, and the priced cost of idle-gap re-writes. The
+  trends page totals the ledger across all rolled-up sessions. Prices come
+  from a small list-price table per model; unknown models fall back to
+  token-only figures.
 - **Trends** — the `trends` button charts rolled-up history: tokens and
   cost per day, per-project and per-model totals, and average base context
   per session over time. Compact session summaries are appended to
@@ -177,6 +184,7 @@ src/attribution.js       usage-delta attribution engine, suggestions (sessions +
 src/basescan.js          base-context disk scan, follows CLAUDE.md @-imports
 src/store.js             session store + SSE broadcast + cross-session docs report
 src/rollup.js            persistent session rollups + trends aggregation
+src/pricing.js           model list prices + cache billing multipliers
 src/otel.js              minimal OTLP/HTTP JSON logs parser
 statusline/statusline.js Claude Code statusline: prints a line, feeds the collector
 public/                  the visualizer UI
