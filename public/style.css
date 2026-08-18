@@ -37,6 +37,22 @@ body {
 }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 
+/* ---- scrollbars: slim, theme-matched ---- */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  background-clip: content-box;
+  border: 2px solid transparent; /* floating pill on any background */
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+/* Firefox (no ::-webkit-scrollbar support) — thin themed bars */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--line) var(--paper); }
+}
+
 #app { display: block; height: 100vh; }
 
 /* ---- sidebar: collapsed rail, slides open on hover / keyboard focus ---- */
@@ -44,11 +60,15 @@ body {
   position: fixed; top: 0; left: 0; bottom: 0; width: 264px; z-index: 10;
   background: var(--panel);
   border-right: 1px solid var(--line);
-  overflow-y: auto;
-  padding: 0.9rem 0.7rem;
+  display: flex; flex-direction: column;
+  overflow: hidden; /* brand + tabs stay put; only the session list scrolls */
+  /* right padding exceeds the 18px collapsed sliver so the session-list
+     scrollbar stays hidden while the drawer is closed */
+  padding: 0.9rem 1.5rem 0.9rem 0.7rem;
   transform: translateX(calc(-100% + 18px));
   transition: transform 0.16s ease 0.3s, box-shadow 0.16s ease 0.3s;
 }
+#session-list { flex: 1; min-height: 0; overflow-y: auto; }
 #sidebar:hover, #sidebar:focus-within {
   transform: none;
   transition-delay: 0s;
