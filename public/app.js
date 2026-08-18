@@ -71,6 +71,7 @@ function actionMatches(hl, a) {
   if (hl.kind === 'reread') return a.label === 'Read ' + hl.subject;
   if (hl.kind === 'fatdoc') return docActionMatch(hl.subject, a);
   if (hl.kind === 'skill') return commandSig(a.label) === hl.subject;
+  if (hl.kind === 'agentroi') return a.cat === 'agent' && a.agentPrompt === hl.subject;
   return false;
 }
 
@@ -101,7 +102,7 @@ const ATT_NAMES = {
 };
 
 // Default per-kind display caps for the Optimize panel.
-const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, injected: 2, basefile: 3, skill: 2, skilllist: 1, compact: 1, recache: 99 };
+const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, injected: 2, basefile: 3, skill: 2, skilllist: 1, agentroi: 2, compact: 1, recache: 99 };
 function cappedSuggs(all) {
   const seen = {};
   return all.filter((g) => {
@@ -137,6 +138,14 @@ function fmtDur(startTs, endTs) {
   const s = Math.max(0, (new Date(endTs) - new Date(startTs)) / 1000);
   if (s < 60) return Math.round(s) + 's';
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
+// Agent compression ratio: tokens burned in the agent's window per token
+// its result added to the parent context.
+function roiRatio(burned, returned) {
+  if (!returned) return null;
+  const r = burned / returned;
+  return (r >= 10 ? Math.round(r) : r.toFixed(1)) + ':1';
 }
 
 function fmtAgo(ts) {
@@ -497,6 +506,10 @@ function renderDetail() {
       `${fmtTok(g.impact)} re-cached after idle gaps (${g.count}% of input spend)`,
       'The prompt cache expires when a session sits idle; grouping interactions (or starting fresh sessions) avoids re-paying the whole prefix.',
     ],
+    agentroi: (g) => [
+      `agent returned ${fmtTok(g.impact)} into the parent context`,
+      'Delegation’s value is compression: the agent’s reading stays in its own window and only conclusions come back. A return this large re-pays the work in the parent — ask agents for findings and summaries, not file contents or raw dumps.',
+    ],
     skilllist: (g) => [
       `${g.subject} listed skills never used — ~${fmtTok(g.impact)} every session`,
       'The skill listing is paid at every session start. Disable plugins or skills this project doesn’t use (/plugin, or move rarely-needed personal skills out of ~/.claude/skills) to slim it — the MCP & skills panel shows each skill’s share.',
@@ -773,6 +786,14 @@ function renderDetail() {
   agentRows.replaceChildren();
   const agents = s.agents || [];
   agentsWrap.hidden = agents.length === 0;
+  const roiKnown = agents.filter((a) => a.returned != null);
+  if (roiKnown.length > 0) {
+    const burned = roiKnown.reduce((n, a) => n + a.tokens, 0);
+    const returned = roiKnown.reduce((n, a) => n + a.returned, 0);
+    agentRows.append(el('div', 'agents-sum',
+      `${fmtTok(burned)} burned in agent windows → ${fmtTok(returned)} returned to parent` +
+      (returned > 0 ? ` · ${roiRatio(burned, returned)} compression` : '')));
+  }
   for (const a of [...agents].sort((x, y) => y.tokens - x.tokens)) {
     const key = `${s.id}|${a.id}`;
     const expanded = !!state.agentToggles[key];
@@ -783,7 +804,8 @@ function renderDetail() {
     head.setAttribute('aria-expanded', String(expanded));
     head.append(
       el('span', 'dp', (expanded ? '▾ ' : '▸ ') + (a.title || a.id)),
-      el('span', 'ds', `${fmtTok(a.tokens)} · ${a.calls} calls`),
+      el('span', 'ds',
+        `${fmtTok(a.tokens)}${a.returned != null ? ' → ' + fmtTok(a.returned) : ''} · ${a.calls} calls`),
     );
     head.title = a.title || a.id;
     const toggle = () => { state.agentToggles[key] = !expanded; renderDetail(); };
@@ -797,6 +819,9 @@ function renderDetail() {
         a.model,
         `ctx ${fmtTok(a.contextNow)}`,
         `+${fmtTok(a.fresh)} in · ${fmtTok(a.output)} out`,
+        a.returned != null
+          ? `returned ${fmtTok(a.returned)}${a.returned > 0 ? ' · ' + roiRatio(a.tokens, a.returned) + ' compression' : ''}`
+          : null,
         fmtDur(a.started, a.ended),
         a.docsReads ? `${a.docsReads} docs reads` : null,
       ].filter(Boolean);

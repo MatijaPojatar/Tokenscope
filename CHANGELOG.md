@@ -24,6 +24,14 @@ versions follow [SemVer](https://semver.org).
     belongs to never-used skills.
 - Subagent MCP calls, skill uses, and ToolSearch loads merge into the
   parent session's panel.
+- **Agent ROI.** Each subagent is matched to the Agent/Task call that
+  spawned it (join: the agent transcript's first prompt equals the call's
+  `input.prompt`, tie-broken by end-time proximity) and shows what its
+  result cost in the parent context next to what it burned in its own
+  window — per-agent "returned · N:1 compression" in the Agents panel, a
+  session-wide burned → returned total, and an Optimize finding when an
+  agent returns ≥5k tokens instead of conclusions (clickable to its call
+  in the timeline).
 - **MCP & skills across sessions** — an `mcp` button (next to `docs`)
   opens a cross-session report: per-server calls, tokens, and session
   counts; per-skill uses and listing shares; and the dead-weight cohorts

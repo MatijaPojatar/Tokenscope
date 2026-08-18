@@ -200,6 +200,11 @@ export class SessionModel {
             ts: evt.timestamp,
             durMs,
           };
+          // The subagent's transcript opens with this same prompt — the
+          // only join key between an agent call and its transcript.
+          if (cat === 'agent' && input && typeof input.prompt === 'string') {
+            action.agentPrompt = input.prompt.slice(0, 240);
+          }
           turn.actions.push(action);
           if (name.startsWith('mcp__')) {
             const parts = name.split('__');
@@ -457,6 +462,40 @@ export class SessionModel {
     };
   }
 
+  // Match each subagent to the parent Agent/Task call that spawned it and
+  // report what its result cost in the parent's context ("returned").
+  // Join: the agent transcript's first prompt equals the call's input.prompt;
+  // identical prompts (parallel fan-outs) tie-break by end-time proximity.
+  // Returns Map(agentId -> {returned, prompt}).
+  agentReturns() {
+    const actions = [];
+    for (const t of this.turns) {
+      for (const a of t.actions) {
+        if (a.cat === 'agent' && a.agentPrompt) actions.push(a);
+      }
+    }
+    const out = new Map();
+    if (actions.length === 0) return out;
+    for (const ag of this.agents.values()) {
+      const first = ag.turns[0];
+      if (!first || !first.prompt || first.prompt === '(session start)') continue;
+      const end = ag.lastActivity ? new Date(ag.lastActivity).getTime() : 0;
+      let best = null;
+      let bestGap = Infinity;
+      for (const a of actions) {
+        if (a.roiClaimed || a.agentPrompt !== first.prompt) continue;
+        const gap = a.ts ? Math.abs(new Date(a.ts).getTime() - end) : Infinity;
+        if (gap < bestGap) { bestGap = gap; best = a; }
+      }
+      if (best) {
+        best.roiClaimed = true;
+        out.set(ag.id, { returned: best.tokens, prompt: best.agentPrompt });
+      }
+    }
+    for (const a of actions) delete a.roiClaimed;
+    return out;
+  }
+
   // Route one event from a subagent transcript to that agent's own model.
   // Agents run in their own context window, so their tokens never touch the
   // parent's gauge — but their docs reads join the parent's leaderboard.
@@ -636,6 +675,20 @@ export class SessionModel {
         subject: `${unusedSkills.length} of ${listedSkills.length}`, context: null,
       });
     }
+    // Fat agent returns: delegation's value is compression — work happens
+    // in the agent's own window and only conclusions come back. A large
+    // return re-pays the reading in the parent context.
+    const agentroiSuggs = [];
+    const areturns = this.agentReturns();
+    for (const ag of this.agents.values()) {
+      const r = areturns.get(ag.id);
+      if (r && r.returned >= 5000) {
+        agentroiSuggs.push({
+          kind: 'agentroi', impact: r.returned, count: 1,
+          subject: r.prompt, context: (ag.title || ag.id).slice(0, 90),
+        });
+      }
+    }
     // Repeated compaction: the session keeps outgrowing its window — every
     // event re-pays a summary plus the rebuilt context, and drops history.
     const compactSuggs = [];
@@ -647,7 +700,7 @@ export class SessionModel {
         count: this.compactions.length, subject: null, context: null,
       });
     }
-    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs, ...injectedSuggs, ...basefileSuggs, ...skillSuggs, ...skilllistSuggs, ...compactSuggs);
+    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs, ...injectedSuggs, ...basefileSuggs, ...skillSuggs, ...skilllistSuggs, ...agentroiSuggs, ...compactSuggs);
     out.sort(byImpact);
     out.splice(40);
     // Recache is mostly a workflow fact, not a docs fix — one entry, always last,
@@ -676,6 +729,7 @@ export class SessionModel {
   }
 
   toJSON() {
+    const areturns = this.agentReturns();
     return {
       id: this.id,
       title: this.title,
@@ -702,6 +756,7 @@ export class SessionModel {
         model: a.model,
         calls: a.totals.calls,
         tokens: a.totals.fresh + a.totals.output,
+        returned: areturns.has(a.id) ? areturns.get(a.id).returned : null,
         fresh: a.totals.fresh,
         output: a.totals.output,
         contextNow: a.contextNow,

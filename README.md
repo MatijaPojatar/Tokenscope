@@ -51,7 +51,11 @@ It runs as a local web page next to your terminal and shows, for every session:
   files with no observed use are flagged separately.
 - **Agents** — subagents spawned by a session, each with its own context
   window: model, runtime, tokens, and the full list of its tool calls with
-  per-call costs. Agent docs reads join the leaderboard, marked `A`.
+  per-call costs. Agent docs reads join the leaderboard, marked `A`. Each
+  agent also shows its ROI: tokens burned in its own window vs. what its
+  result added to the parent's context (matched via the spawning call's
+  prompt), with a per-session compression total and an Optimize finding
+  when an agent returns a fat payload instead of conclusions.
 - **Docs across sessions** — the `docs` button aggregates every doc read by
   any session or agent in the loaded window, plus a "loaded every session ·
   never read or edited" section: the strongest observable dead-weight signal
