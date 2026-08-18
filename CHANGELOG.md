@@ -3,6 +3,38 @@
 Notable changes to Tokenscope. Format follows [Keep a Changelog](https://keepachangelog.com);
 versions follow [SemVer](https://semver.org).
 
+## [Unreleased]
+
+### Added
+
+- **MCP server & skill cost attribution.** A new "MCP & skills" panel
+  makes the standing tool surface visible:
+  - the skill listing is parsed per skill and its measured injection cost
+    prorated per entry — every session's price for each skill's presence;
+  - skill invocations are counted from Skill tool calls and slash
+    commands (results priced from usage); skills never used in the window
+    are totaled, with the honest caveat that only invocations are
+    observable;
+  - MCP servers merge the configured roster (project `.mcp.json` and
+    `~\.claude.json`, global and per-project) with observed
+    `mcp__server__tool` calls — per-server call counts, result tokens,
+    tools used, and a "configured · never called" dead-weight flag;
+  - ToolSearch loads of deferred tool schemas are counted and priced;
+  - an Optimize finding fires when a meaningful share of the listing
+    belongs to never-used skills.
+- Subagent MCP calls, skill uses, and ToolSearch loads merge into the
+  parent session's panel.
+- **MCP & skills across sessions** — an `mcp` button (next to `docs`)
+  opens a cross-session report: per-server calls, tokens, and session
+  counts; per-skill uses and listing shares; and the dead-weight cohorts
+  "configured · never called" and "paid in the listing · never used"
+  aggregated over every loaded session.
+
+### Changed
+
+- The expandable-row helper is shared by the base-context, compaction,
+  and MCP & skills panels instead of being duplicated per panel.
+
 ## [0.2.0] — 2026-08-18
 
 ### Added

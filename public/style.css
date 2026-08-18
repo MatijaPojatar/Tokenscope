@@ -73,15 +73,16 @@ body {
   letter-spacing: 0.06em;
   color: var(--accent);
 }
-#docs-btn {
+.brand-btns { display: flex; gap: 0.3rem; }
+.brand-btns button {
   font-family: var(--mono); font-size: 0.66rem;
   background: var(--panel-2); color: var(--muted);
   border: 1px solid var(--line); border-radius: 6px;
   padding: 0.2rem 0.55rem; cursor: pointer;
 }
-#docs-btn:hover { color: var(--ink); }
-#docs-btn.active { color: var(--accent); border-color: var(--accent); }
-#docs-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.brand-btns button:hover { color: var(--ink); }
+.brand-btns button.active { color: var(--accent); border-color: var(--accent); }
+.brand-btns button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .session-item {
   padding: 0.55rem 0.6rem;
   border-radius: 8px;
@@ -330,8 +331,8 @@ h2 {
   vertical-align: 0.08em;
 }
 
-/* ---- cross-session docs report ---- */
-#report { padding: 1.3rem 1.4rem 3rem; max-width: 860px; }
+/* ---- cross-session reports ---- */
+.report { padding: 1.3rem 1.4rem 3rem; max-width: 860px; }
 .report-head { margin-bottom: 1rem; }
 .report-head h1 { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; margin: 0 0 0.2rem; }
 .report-sub { font-size: 0.7rem; color: var(--muted); }

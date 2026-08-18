@@ -33,6 +33,17 @@ It runs as a local web page next to your terminal and shows, for every session:
   full window" forecast from the recent per-turn burn rate, and repeated
   compaction raises an Optimize finding. The rebuild is booked to its
   compaction, not misread as cache recache.
+- **MCP & skills** — what the standing tool surface costs and whether it's
+  used. The skill listing is split per skill and priced from measured usage
+  (~its share of every session start), with invocation counts from Skill
+  calls and slash commands; skills never used are totaled. MCP servers are
+  itemized from configured rosters (`.mcp.json`, `~\.claude.json`) merged
+  with observed `mcp__server__tool` calls — a configured server with zero
+  calls is the flag. ToolSearch loads of deferred tool schemas are measured
+  too. A never-used share of the listing raises an Optimize finding, and
+  the `mcp` button aggregates servers and skills across every loaded
+  session — with "configured · never called" and "paid in the listing ·
+  never used" cohorts as the cross-session dead-weight signals.
 - **Docs leaderboard** — which `.md` files (project `.claude\` docs and
   auto-injected CLAUDE.md included) were read, how often, and what they
   cost. Each doc expands to every individual use — time, tokens, and the

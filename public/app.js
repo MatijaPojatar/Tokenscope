@@ -19,10 +19,12 @@ const state = {
   detail: {},      // id -> full session model
   selected: null,
   pinned: false,   // user clicked a session; stop auto-following
-  view: 'session', // 'session' | 'docs' (cross-session report)
+  view: 'session', // 'session' | 'docs' | 'mcp' (cross-session reports)
   rateLimits: null,
   report: { read: [], unused: [] },
   reportFetched: 0,
+  mcpReport: null,
+  mcpReportFetched: 0,
   turnToggles: {}, // turn key -> expanded override (survives live re-renders)
   agentToggles: {}, // agent key -> expanded
   highlight: null, // {kind, subject} from a clicked Optimize entry
@@ -99,7 +101,7 @@ const ATT_NAMES = {
 };
 
 // Default per-kind display caps for the Optimize panel.
-const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, injected: 2, basefile: 3, skill: 2, compact: 1, recache: 99 };
+const SUGG_CAPS = { search: 4, reread: 3, fatdoc: 2, injected: 2, basefile: 3, skill: 2, skilllist: 1, compact: 1, recache: 99 };
 function cappedSuggs(all) {
   const seen = {};
   return all.filter((g) => {
@@ -393,21 +395,21 @@ function renderDetail() {
   const projSessionCount = Math.max(1, state.sessions.filter(
     (x) => x.cwd && s.cwd && x.cwd.toLowerCase() === s.cwd.toLowerCase()).length);
 
-  // base context breakdown: disk-scanned files + measured injections +
-  // the unitemizable remainder (system prompt, tool schemas)
-  const baseWrap = $('base-wrap');
-  const baseRows = $('base-rows');
-  baseRows.replaceChildren();
-  const baseTotal = (s.context && s.context.base) || 0;
-  baseWrap.hidden = baseTotal === 0;
-  if (baseTotal > 0) {
-    const estTok = (chars) => Math.max(1, Math.round(chars / 3.8));
-    const addBaseRow = (id, k, v, detail) => {
+  // Expandable key/value rows — shared by the base, compaction, and
+  // MCP & skills panels. Toggle state lives in state.baseToggles.
+  const estTok = (chars) => Math.max(1, Math.round(chars / 3.8));
+  const rowAdder = (container) => ({
+    group(label, v) {
+      const h = el('div', 'base-group');
+      h.append(el('span', null, label), el('b', null, v));
+      container.append(h);
+    },
+    row(id, k, v, detail) {
       const rowKey = `${s.id}|${id}`;
       const open = !!state.baseToggles[rowKey];
       const r = el('div', 'base-row' + (detail ? ' exp' : ''));
       r.append(el('span', null, (detail ? (open ? '▾ ' : '▸ ') : '') + k), el('b', null, v));
-      baseRows.append(r);
+      container.append(r);
       if (!detail) return;
       r.tabIndex = 0;
       r.setAttribute('role', 'button');
@@ -420,15 +422,20 @@ function renderDetail() {
       if (open) {
         const box = el('div', 'base-detail');
         for (const line of detail().filter(Boolean)) box.append(el('div', null, line));
-        baseRows.append(box);
+        container.append(box);
       }
-    };
+    },
+  });
 
-    const addGroupHead = (label, v) => {
-      const h = el('div', 'base-group');
-      h.append(el('span', null, label), el('b', null, v));
-      baseRows.append(h);
-    };
+  // base context breakdown: disk-scanned files + measured injections +
+  // the unitemizable remainder (system prompt, tool schemas)
+  const baseWrap = $('base-wrap');
+  const baseRows = $('base-rows');
+  baseRows.replaceChildren();
+  const baseTotal = (s.context && s.context.base) || 0;
+  baseWrap.hidden = baseTotal === 0;
+  if (baseTotal > 0) {
+    const { row: addBaseRow, group: addGroupHead } = rowAdder(baseRows);
     addGroupHead('loaded at session start', fmtTok(baseTotal));
 
     let diskSum = 0;
@@ -490,6 +497,10 @@ function renderDetail() {
       `${fmtTok(g.impact)} re-cached after idle gaps (${g.count}% of input spend)`,
       'The prompt cache expires when a session sits idle; grouping interactions (or starting fresh sessions) avoids re-paying the whole prefix.',
     ],
+    skilllist: (g) => [
+      `${g.subject} listed skills never used — ~${fmtTok(g.impact)} every session`,
+      'The skill listing is paid at every session start. Disable plugins or skills this project doesn’t use (/plugin, or move rarely-needed personal skills out of ~/.claude/skills) to slim it — the MCP & skills panel shows each skill’s share.',
+    ],
     compact: (g) => [
       `context compacted ${g.count}× — ~${fmtTok(g.impact)} re-paid`,
       'Each compaction summarizes and drops history, then re-pays the rebuilt context as fresh input. Trim always-loaded base files, route heavy searches and reads through agents (their tokens stay in separate windows), and prefer a fresh session per task.',
@@ -525,7 +536,7 @@ function renderDetail() {
     const render = SUGG[g.kind];
     if (!render) continue;
     const [headline, fix] = render(g);
-    const clickable = g.kind !== 'recache' && g.kind !== 'injected' && g.kind !== 'basefile' && g.kind !== 'compact';
+    const clickable = g.kind !== 'recache' && g.kind !== 'injected' && g.kind !== 'basefile' && g.kind !== 'compact' && g.kind !== 'skilllist';
     const isActive = clickable && state.highlight &&
       state.highlight.kind === g.kind && state.highlight.subject === g.subject;
     const item = el('div', 'sugg-item' + (clickable ? ' clickable' : '') + (isActive ? ' active' : ''));
@@ -581,38 +592,82 @@ function renderDetail() {
   const compactRows = $('compact-rows');
   compactRows.replaceChildren();
   compactWrap.hidden = comps.length === 0;
+  const compactAdder = rowAdder(compactRows);
   comps.forEach((c, ci) => {
-    const rowKey = `${s.id}|compact|${ci}`;
-    const open = !!state.baseToggles[rowKey];
     const dropped = Math.max(0, (c.preTokens || 0) - (c.postTokens || 0));
-    const r = el('div', 'base-row exp');
-    r.append(
-      el('span', null, `${open ? '▾' : '▸'} ${fmtClock(c.ts)} · ${c.trigger}`),
-      el('b', null, '−' + fmtTok(dropped)),
-    );
-    r.tabIndex = 0;
-    r.setAttribute('role', 'button');
-    r.setAttribute('aria-expanded', String(open));
-    const tgl = () => { state.baseToggles[rowKey] = !open; renderDetail(); };
-    r.onclick = tgl;
-    r.onkeydown = (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tgl(); }
-    };
-    compactRows.append(r);
-    if (open) {
-      const box = el('div', 'base-detail');
-      const lines = [
-        `context ${fmtTok(c.preTokens)} → ${fmtTok(c.postTokens)} · ${fmtTok(dropped)} tokens of history dropped`,
-        (c.summaryTokens || c.rebuildTokens)
-          ? `cost: ~${fmtTok(c.summaryTokens)} summary + ~${fmtTok(c.rebuildTokens)} rebuilt context, re-paid as fresh input`
-          : null,
-        c.durationMs ? `compaction ran ${fmtMs(c.durationMs)}` : null,
-        'Dropped history is gone for the model — earlier decisions survive only in the summary turn marked ⟲ in the timeline.',
-      ];
-      for (const line of lines.filter(Boolean)) box.append(el('div', null, line));
-      compactRows.append(box);
-    }
+    compactAdder.row(`compact|${ci}`, `${fmtClock(c.ts)} · ${c.trigger}`, '−' + fmtTok(dropped), () => [
+      `context ${fmtTok(c.preTokens)} → ${fmtTok(c.postTokens)} · ${fmtTok(dropped)} tokens of history dropped`,
+      (c.summaryTokens || c.rebuildTokens)
+        ? `cost: ~${fmtTok(c.summaryTokens)} summary + ~${fmtTok(c.rebuildTokens)} rebuilt context, re-paid as fresh input`
+        : null,
+      c.durationMs ? `compaction ran ${fmtMs(c.durationMs)}` : null,
+      'Dropped history is gone for the model — earlier decisions survive only in the summary turn marked ⟲ in the timeline.',
+    ]);
   });
+
+  // MCP servers & skills — measured calls and results; schemas and the
+  // listing are the per-session standing cost
+  const mcpWrap = $('mcp-wrap');
+  const mcpRows = $('mcp-rows');
+  mcpRows.replaceChildren();
+  const ms = s.mcpSkills || { skills: [], mcp: [], toolSearch: { calls: 0, tokens: 0 } };
+  const hasMcp = (ms.mcp || []).length > 0 || (ms.toolSearch && ms.toolSearch.calls > 0);
+  const hasSkills = (ms.skills || []).length > 0;
+  mcpWrap.hidden = !hasMcp && !hasSkills;
+  if (!mcpWrap.hidden) {
+    const M = rowAdder(mcpRows);
+    if (hasMcp) {
+      const mcpTotal = (ms.mcp || []).reduce((n, m) => n + m.tokens, 0) + (ms.toolSearch.tokens || 0);
+      M.group('mcp servers', fmtTok(mcpTotal));
+      for (const m of ms.mcp || []) {
+        const used = m.calls > 0;
+        M.row(`mcp|${m.server}`, m.server,
+          used ? `${m.calls}× · ${fmtTok(m.tokens)}` : 'never called',
+          () => [
+            used
+              ? `tools used: ${m.tools.join(', ')}`
+              : 'No calls by any turn or agent of this session in the loaded window.',
+            used && m.lastTs ? `last call ${fmtClock(m.lastTs)}` : null,
+            m.scope ? `configured: ${m.scope}` : null,
+            m.agent ? 'Includes calls made by subagents.' : null,
+            'Tool schemas load into base context every session; transcripts don’t itemize their size — calls and result tokens are the measured signals.',
+          ]);
+      }
+      if (ms.toolSearch.calls > 0) {
+        M.row('mcp|toolsearch', 'deferred tool loads',
+          `${ms.toolSearch.calls}× · ${fmtTok(ms.toolSearch.tokens)}`, () => [
+            'Schemas fetched on demand via ToolSearch — the measured context cost of loading deferred tools in this session and its agents.',
+          ]);
+      }
+    }
+    if (hasSkills) {
+      const skills = ms.skills || [];
+      M.group('skills', ms.listingTokens ? `~${fmtTok(ms.listingTokens)}/session` : '');
+      for (const x of skills.filter((k) => k.uses > 0)) {
+        M.row(`skill|${x.name}`, x.name,
+          `${x.uses}×${x.tokens ? ' · ' + fmtTok(x.tokens) : ''}`,
+          () => [
+            x.listed
+              ? `~${fmtTok(x.share)}/session as its share of the skill listing`
+              : 'Invoked via the Skill tool; not in this session’s listing.',
+            x.tokens ? `${fmtTok(x.tokens)} of invocation results in context` : null,
+            x.lastTs ? `last used ${fmtClock(x.lastTs)}` : null,
+          ]);
+      }
+      const unusedSkills = skills.filter((k) => k.uses === 0);
+      if (unusedSkills.length > 0) {
+        const unusedShare = unusedSkills.reduce((n, k) => n + k.share, 0);
+        M.row('skill|unused', `${unusedSkills.length} skills never used`,
+          `~${fmtTok(unusedShare)}/session`, () => {
+            const top = [...unusedSkills].sort((a, b) => b.share - a.share);
+            const lines = top.slice(0, 15).map((k) => `${k.name} — ~${fmtTok(k.share)}/session`);
+            if (top.length > 15) lines.push(`… and ${top.length - 15} more`);
+            lines.push('Their listing entries are paid at every session start. Only invocations are observable — a skill can still steer behavior from its description alone.');
+            return lines;
+          });
+      }
+    }
+  }
 
   // docs leaderboard
   const docsBox = $('doc-rows');
@@ -825,6 +880,73 @@ function renderReport() {
   }
 }
 
+function renderMcpReport() {
+  const box = $('mcp-report-rows');
+  box.replaceChildren();
+  const r = state.mcpReport;
+  if (!r) {
+    box.append(el('div', 'ds', 'loading…'));
+    return;
+  }
+  const plural = (n) => `${n} session${n === 1 ? '' : 's'}`;
+  const group = (label, v) => {
+    const h = el('div', 'base-group');
+    h.append(el('span', null, label), el('b', null, v || ''));
+    box.append(h);
+  };
+  const row = (name, meta, title, cls) => {
+    const rr = el('div', 'doc-row report-row' + (cls ? ' ' + cls : ''));
+    rr.append(el('span', 'dp', name), el('span', 'ds', meta));
+    if (title) rr.title = title;
+    box.append(rr);
+  };
+
+  const hasMcp = r.mcpUsed.length || r.mcpUnused.length || r.toolSearch.calls;
+  const hasSkills = r.usedSkills.length || r.unusedSkills.length;
+  if (!hasMcp && !hasSkills) {
+    box.append(el('div', 'ds', 'no MCP or skill activity in the loaded window'));
+    return;
+  }
+
+  if (hasMcp) {
+    group('mcp servers', fmtTok(r.mcpUsed.reduce((n, m) => n + m.tokens, 0) + r.toolSearch.tokens));
+    for (const m of r.mcpUsed) {
+      row(m.server, `${m.calls}× · ${fmtTok(m.tokens)} · ${plural(m.usedSessions)}`,
+        `tools: ${m.tools.join(', ')}` + (m.scope ? ` · configured: ${m.scope}` : ''));
+    }
+    if (r.toolSearch.calls > 0) {
+      row('deferred tool loads (ToolSearch)',
+        `${r.toolSearch.calls}× · ${fmtTok(r.toolSearch.tokens)} · ${plural(r.toolSearch.sessions)}`,
+        'Schemas fetched on demand — the measured context cost of loading deferred tools.');
+    }
+    for (const m of r.mcpUnused) {
+      row(m.server, 'configured · never called',
+        (m.scope ? `configured: ${m.scope} · ` : '') +
+        'its tool schemas still load into base context every session (size not itemized in transcripts)', 'unusedrow');
+    }
+  }
+
+  if (hasSkills) {
+    group('skills', r.listingSessions
+      ? `listing ~${fmtTok(Math.round(r.listingTokensTotal / r.listingSessions))}/session · ${fmtTok(r.listingTokensTotal)} across ${plural(r.listingSessions)}`
+      : '');
+    for (const x of r.usedSkills) {
+      row(x.name, `${x.uses}× · ${plural(x.usedSessions)}${x.tokens ? ' · ' + fmtTok(x.tokens) : ''}`,
+        x.listedSessions
+          ? `~${fmtTok(Math.round(x.shareTotal / x.listedSessions))}/session as its listing share`
+          : 'invoked via the Skill tool; not in any loaded listing');
+    }
+    if (r.unusedSkills.length > 0) {
+      box.append(el('div', 'doc-unused-head', 'paid in the listing · never used'));
+      for (const x of r.unusedSkills) {
+        row(x.name,
+          `${plural(x.listedSessions)} · ~${fmtTok(Math.round(x.shareTotal / Math.max(1, x.listedSessions)))} each · ${fmtTok(x.shareTotal)} total`,
+          'Only invocations are observable — a skill can still steer behavior from its description alone.', 'unusedrow');
+      }
+    }
+  }
+}
+
 async function fetchReport(force) {
   if (!force && Date.now() - state.reportFetched < 5000) return;
   state.reportFetched = Date.now();
@@ -837,30 +959,51 @@ async function fetchReport(force) {
   } catch { /* collector restarting */ }
 }
 
+async function fetchMcpReport(force) {
+  if (!force && Date.now() - state.mcpReportFetched < 5000) return;
+  state.mcpReportFetched = Date.now();
+  try {
+    const res = await fetch('/api/mcpskills');
+    if (res.ok) {
+      state.mcpReport = await res.json();
+      if (state.view === 'mcp') renderMcpReport();
+    }
+  } catch { /* collector restarting */ }
+}
+
 function render() {
   if (!state.pinned && state.sessions.length > 0) {
     state.selected = state.sessions[0].id;
   }
   renderList();
   $('docs-btn').classList.toggle('active', state.view === 'docs');
-  if (state.view === 'docs') {
+  $('mcp-btn').classList.toggle('active', state.view === 'mcp');
+  $('report').hidden = state.view !== 'docs';
+  $('mcp-report').hidden = state.view !== 'mcp';
+  if (state.view === 'docs' || state.view === 'mcp') {
     $('empty').hidden = true;
     $('detail').hidden = true;
-    $('report').hidden = false;
-    renderReport();
+    if (state.view === 'docs') renderReport();
+    else renderMcpReport();
   } else {
-    $('report').hidden = true;
     renderDetail();
   }
 }
 
+// Keep the drawer hover-driven after report-button clicks: a focused button
+// would hold it open (:focus-within) over the content the click revealed.
 $('docs-btn').onclick = () => {
   state.view = state.view === 'docs' ? 'session' : 'docs';
   if (state.view === 'docs') fetchReport(true);
   render();
-  // Keep the drawer hover-driven: a focused button would hold it open
-  // (:focus-within) over the content the click just revealed.
   $('docs-btn').blur();
+};
+
+$('mcp-btn').onclick = () => {
+  state.view = state.view === 'mcp' ? 'session' : 'mcp';
+  if (state.view === 'mcp') fetchMcpReport(true);
+  render();
+  $('mcp-btn').blur();
 };
 
 // ---- SSE ----
@@ -876,6 +1019,7 @@ es.onmessage = (msg) => {
       if (!state.detail[s.id]) fetchDetail(s.id);
     }
     if (state.view === 'docs') fetchReport(false);
+    if (state.view === 'mcp') fetchMcpReport(false);
     render();
   } else if (data.type === 'session') {
     state.detail[data.session.id] = data.session;

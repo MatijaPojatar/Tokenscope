@@ -48,6 +48,35 @@ async function collect(out, label, p, cwd, depth, seen) {
   }
 }
 
+// Configured MCP servers for a project: project .mcp.json plus the user's
+// ~/.claude.json (global and per-project entries). Config names the servers;
+// their tool schemas are fetched at runtime and sit in the unitemized base
+// remainder, so this scan provides the roster, not the size.
+export async function scanMcpConfig(cwd) {
+  const readJson = async (p) => {
+    try { return JSON.parse(await fsp.readFile(p, 'utf8')); } catch { return null; }
+  };
+  const out = new Map(); // name -> scope (project config wins the label)
+  const proj = await readJson(path.join(cwd, '.mcp.json'));
+  for (const name of Object.keys((proj && proj.mcpServers) || {})) {
+    out.set(name, 'project (.mcp.json)');
+  }
+  const user = await readJson(path.join(os.homedir(), '.claude.json'));
+  if (user) {
+    const want = String(cwd).replace(/\//g, '\\').toLowerCase();
+    for (const [p, cfg] of Object.entries(user.projects || {})) {
+      if (String(p).replace(/\//g, '\\').toLowerCase() !== want) continue;
+      for (const name of Object.keys(cfg.mcpServers || {})) {
+        if (!out.has(name)) out.set(name, 'project (user config)');
+      }
+    }
+    for (const name of Object.keys(user.mcpServers || {})) {
+      if (!out.has(name)) out.set(name, 'user (~\\.claude.json)');
+    }
+  }
+  return [...out].map(([name, scope]) => ({ name, scope }));
+}
+
 export async function scanBaseContext(cwd) {
   const home = os.homedir();
   const out = [];

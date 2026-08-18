@@ -97,6 +97,63 @@ export class Store {
     return { read, unused };
   }
 
+  // Cross-session MCP & skills report: every server call and skill use by
+  // any session or agent in the window, with never-used cohorts called out —
+  // the same dead-weight logic the docs report applies to base-loaded files.
+  mcpSkillsReport() {
+    const skills = new Map();
+    const mcp = new Map();
+    const toolSearch = { calls: 0, tokens: 0, sessions: 0 };
+    let listingSessions = 0;
+    let listingTokensTotal = 0;
+    for (const s of this.sessions.values()) {
+      const r = s.mcpSkillsReport();
+      if (r.listingTokens > 0) {
+        listingSessions += 1;
+        listingTokensTotal += r.listingTokens;
+      }
+      for (const x of r.skills) {
+        const cur = skills.get(x.name) ||
+          { name: x.name, uses: 0, tokens: 0, shareTotal: 0, listedSessions: 0, usedSessions: 0, lastTs: null };
+        cur.uses += x.uses;
+        cur.tokens += x.tokens;
+        if (x.listed) { cur.listedSessions += 1; cur.shareTotal += x.share; }
+        if (x.uses > 0) cur.usedSessions += 1;
+        if (x.lastTs && (!cur.lastTs || x.lastTs > cur.lastTs)) cur.lastTs = x.lastTs;
+        skills.set(x.name, cur);
+      }
+      for (const m of r.mcp) {
+        const cur = mcp.get(m.server) ||
+          { server: m.server, scope: null, calls: 0, tokens: 0, usedSessions: 0, configuredSessions: 0, tools: new Set(), lastTs: null };
+        cur.calls += m.calls;
+        cur.tokens += m.tokens;
+        if (m.calls > 0) cur.usedSessions += 1;
+        if (m.scope) { cur.scope = cur.scope || m.scope; cur.configuredSessions += 1; }
+        for (const t of m.tools) cur.tools.add(t);
+        if (m.lastTs && (!cur.lastTs || m.lastTs > cur.lastTs)) cur.lastTs = m.lastTs;
+        mcp.set(m.server, cur);
+      }
+      if (r.toolSearch.calls > 0) {
+        toolSearch.calls += r.toolSearch.calls;
+        toolSearch.tokens += r.toolSearch.tokens;
+        toolSearch.sessions += 1;
+      }
+    }
+    const allSkills = [...skills.values()];
+    const allMcp = [...mcp.values()].map((m) => ({ ...m, tools: [...m.tools] }));
+    return {
+      listingSessions,
+      listingTokensTotal,
+      usedSkills: allSkills.filter((x) => x.uses > 0)
+        .sort((a, b) => b.uses - a.uses || b.tokens - a.tokens),
+      unusedSkills: allSkills.filter((x) => x.uses === 0)
+        .sort((a, b) => b.shareTotal - a.shareTotal),
+      mcpUsed: allMcp.filter((m) => m.calls > 0).sort((a, b) => b.tokens - a.tokens),
+      mcpUnused: allMcp.filter((m) => m.calls === 0),
+      toolSearch,
+    };
+  }
+
   sessionList() {
     return [...this.sessions.values()]
       .map((s) => ({

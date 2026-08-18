@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { Store } from './store.js';
 import { SessionWatcher, defaultRoot } from './watcher.js';
 import { extractApiRequests } from './otel.js';
-import { scanBaseContext } from './basescan.js';
+import { scanBaseContext, scanMcpConfig } from './basescan.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -36,6 +36,7 @@ const store = new Store();
 store.onBaseScan = async (s) => {
   try {
     s.baseFiles = await scanBaseContext(s.cwd);
+    s.mcpConfigured = await scanMcpConfig(s.cwd);
     store.dirty.add(s.id);
   } catch { /* scan failed — panel shows totals only */ }
 };
@@ -89,6 +90,12 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/docs') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(store.docsReport()));
+    return;
+  }
+
+  if (url.pathname === '/api/mcpskills') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(store.mcpSkillsReport()));
     return;
   }
 

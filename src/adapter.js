@@ -9,9 +9,9 @@
 //                           usage: {input, cacheWrite, cacheRead, output},
 //                           blocks: [{type:'tool_use', id, name, input} | {type, chars}] }
 //   { kind: 'prompt',       text, chars, timestamp, promptId, isSidechain, cwd,
-//                           isCompactSummary }
+//                           isCompactSummary, commands? }
 //   { kind: 'tool_results', results: [{toolUseId, chars}], timestamp, isSidechain }
-//   { kind: 'attachment',   atype, chars, path, timestamp }
+//   { kind: 'attachment',   atype, chars, path, timestamp, skills? }
 //   { kind: 'compaction',   uuid, timestamp, trigger, preTokens, postTokens, durationMs }
 //   { kind: 'title',        title }
 
@@ -28,6 +28,25 @@ function contentChars(content) {
     return n;
   }
   return JSON.stringify(content).length;
+}
+
+// The skill_listing attachment is a text block of "- name: description"
+// entries (descriptions may wrap onto continuation lines). Split it so each
+// skill's share of the listing cost can be attributed.
+function parseSkillListing(text) {
+  if (typeof text !== 'string') return null;
+  const out = [];
+  let cur = null;
+  for (const line of text.split('\n')) {
+    const m = /^- ([A-Za-z0-9_.:*-]+):\s/.exec(line);
+    if (m) {
+      cur = { name: m[1], chars: line.length + 1 };
+      out.push(cur);
+    } else if (cur) {
+      cur.chars += line.length + 1;
+    }
+  }
+  return out.length > 0 ? out : null;
 }
 
 function normalizeUsage(u) {
@@ -98,6 +117,10 @@ export function parseLine(line) {
         .replace(/<system-reminder>[\s\S]*?<\/system-reminder>\s*/g, '')
         .trim();
       if (!text) return null;
+      // Slash-command invocations (skills and built-ins) are wrapped in
+      // command-name tags — extract them so skill use can be counted.
+      const commands = [...text.matchAll(/<command-name>\/?([^<\s]+)<\/command-name>/g)]
+        .map((m) => m[1]);
       return {
         kind: 'prompt',
         text,
@@ -107,6 +130,7 @@ export function parseLine(line) {
         isSidechain: !!e.isSidechain,
         cwd: e.cwd,
         isCompactSummary: !!e.isCompactSummary,
+        commands: commands.length > 0 ? commands : undefined,
       };
     }
 
@@ -137,6 +161,7 @@ export function parseLine(line) {
         chars: contentChars(a.content) || JSON.stringify(a).length,
         path,
         timestamp: e.timestamp,
+        skills: a.type === 'skill_listing' ? parseSkillListing(a.content) : undefined,
       };
     }
 

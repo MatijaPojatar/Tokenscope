@@ -111,6 +111,11 @@ export class SessionModel {
     this.compactions = []; // {ts, trigger, preTokens, postTokens, durationMs, summaryTokens, rebuildTokens}
     this.seenCompactions = new Set(); // boundary uuids — resumes re-append old lines
     this.pendingCompaction = null; // record awaiting its first post-compaction settle
+    this.skillList = new Map(); // name -> chars in the latest skill_listing
+    this.skillUses = new Map(); // name -> {count, actions: [], lastTs, viaTool}
+    this.mcpUses = new Map(); // server -> {server, calls, actions: [], tools: Set, lastTs}
+    this.toolSearchUses = { calls: 0, actions: [] }; // deferred tool schema loads
+    this.mcpConfigured = null; // disk-scanned MCP server config (set by the store)
   }
 
   currentTurn() {
@@ -141,6 +146,7 @@ export class SessionModel {
           compactSummary: !!evt.isCompactSummary,
         });
         if (this.turns.length > MAX_TURNS) this.turns.shift();
+        for (const cmd of evt.commands || []) this.noteSkillUse(cmd, null, evt.timestamp);
         this.pending.push({
           cat: 'conversation',
           chars: evt.chars,
@@ -195,6 +201,22 @@ export class SessionModel {
             durMs,
           };
           turn.actions.push(action);
+          if (name.startsWith('mcp__')) {
+            const parts = name.split('__');
+            const server = parts[1] || name;
+            const rec = this.mcpUses.get(server) ||
+              { server, calls: 0, actions: [], tools: new Set(), lastTs: null };
+            rec.calls += 1;
+            rec.actions.push(action);
+            rec.tools.add(parts.slice(2).join('__') || name);
+            rec.lastTs = evt.timestamp;
+            this.mcpUses.set(server, rec);
+          } else if (name === 'Skill' && input && input.skill) {
+            this.noteSkillUse(String(input.skill), action, evt.timestamp);
+          } else if (name === 'ToolSearch') {
+            this.toolSearchUses.calls += 1;
+            this.toolSearchUses.actions.push(action);
+          }
           let docPath = null;
           if (cat === 'docsRead' || cat === 'codeRead') {
             docPath = input && input.file_path;
@@ -210,6 +232,11 @@ export class SessionModel {
       }
 
       case 'attachment': {
+        // Each skill_listing injection is the full current listing — keep
+        // the latest split so listing cost can be prorated per skill.
+        if (evt.atype === 'skill_listing' && evt.skills) {
+          this.skillList = new Map(evt.skills.map((x) => [x.name, x.chars]));
+        }
         // Auto-injected CLAUDE.md files count as docs — they cost context
         // tokens the same way an explicit Read does.
         if (evt.atype === 'nested_memory' && evt.path) {
@@ -332,6 +359,102 @@ export class SessionModel {
     this.contextNow = u.cacheRead + u.cacheWrite + u.input + u.output;
     this.maxContext = Math.max(this.maxContext, this.contextNow);
     this.window = this.maxContext > 210000 ? 1000000 : DEFAULT_WINDOW;
+  }
+
+  // One skill invocation — via the Skill tool (action carries its result
+  // cost) or a slash command in a prompt (no action).
+  noteSkillUse(name, action, ts) {
+    const key = String(name).replace(/^\//, '');
+    if (!key) return;
+    const rec = this.skillUses.get(key) ||
+      { count: 0, actions: [], lastTs: null, viaTool: false };
+    rec.count += 1;
+    if (action) {
+      rec.actions.push(action);
+      rec.viaTool = true;
+    }
+    if (ts) rec.lastTs = ts;
+    this.skillUses.set(key, rec);
+  }
+
+  // MCP-server and skill usage, merged across the session and its agents.
+  // Per-skill listing cost is the measured skill_listing injection prorated
+  // by each entry's share of the listing text. MCP tool *schemas* live in
+  // the unitemized base remainder — calls and results are what's measurable.
+  mcpSkillsReport() {
+    const sum = (actions) => actions.reduce((n, a) => n + a.tokens, 0);
+
+    const mcp = new Map();
+    const addMcp = (rec, viaAgent) => {
+      const cur = mcp.get(rec.server) ||
+        { server: rec.server, scope: null, calls: 0, tokens: 0, tools: new Set(), lastTs: null, agent: false };
+      cur.calls += rec.calls;
+      cur.tokens += sum(rec.actions);
+      for (const t of rec.tools) cur.tools.add(t);
+      if (rec.lastTs && (!cur.lastTs || rec.lastTs > cur.lastTs)) cur.lastTs = rec.lastTs;
+      if (viaAgent) cur.agent = true;
+      mcp.set(rec.server, cur);
+    };
+    for (const rec of this.mcpUses.values()) addMcp(rec, false);
+    for (const a of this.agents.values()) for (const rec of a.mcpUses.values()) addMcp(rec, true);
+    for (const c of this.mcpConfigured || []) {
+      const cur = mcp.get(c.name);
+      if (cur) cur.scope = c.scope;
+      else mcp.set(c.name, { server: c.name, scope: c.scope, calls: 0, tokens: 0, tools: new Set(), lastTs: null, agent: false });
+    }
+
+    const uses = new Map();
+    const addUse = (name, rec) => {
+      const cur = uses.get(name) || { count: 0, tokens: 0, lastTs: null, viaTool: false };
+      cur.count += rec.count;
+      cur.tokens += sum(rec.actions);
+      if (rec.viaTool) cur.viaTool = true;
+      if (rec.lastTs && (!cur.lastTs || rec.lastTs > cur.lastTs)) cur.lastTs = rec.lastTs;
+      uses.set(name, cur);
+    };
+    for (const [n, rec] of this.skillUses) addUse(n, rec);
+    for (const a of this.agents.values()) for (const [n, rec] of a.skillUses) addUse(n, rec);
+
+    const listRec = this.baseAttachments.get('skill_listing');
+    const listTotal = [...this.skillList.values()].reduce((a, b) => a + b, 0);
+    const listingTokens = listRec
+      ? Math.round((listRec.tokens || est(listRec.chars)) / Math.max(1, listRec.count))
+      : 0;
+    const skills = [];
+    for (const [name, chars] of this.skillList) {
+      const u = uses.get(name);
+      skills.push({
+        name, listed: true,
+        share: listTotal > 0 ? Math.round((listingTokens * chars) / listTotal) : 0,
+        uses: u ? u.count : 0,
+        tokens: u ? u.tokens : 0,
+        lastTs: u ? u.lastTs : null,
+      });
+      uses.delete(name);
+    }
+    // Uses with no listing entry: real skills only if invoked via the Skill
+    // tool — bare slash commands not in the listing are built-ins.
+    for (const [name, u] of uses) {
+      if (!u.viaTool) continue;
+      skills.push({ name, listed: false, share: 0, uses: u.count, tokens: u.tokens, lastTs: u.lastTs });
+    }
+    skills.sort((x, y) => (y.uses - x.uses) || (y.share - x.share));
+
+    let tsCalls = this.toolSearchUses.calls;
+    let tsTokens = sum(this.toolSearchUses.actions);
+    for (const a of this.agents.values()) {
+      tsCalls += a.toolSearchUses.calls;
+      tsTokens += sum(a.toolSearchUses.actions);
+    }
+
+    return {
+      listingTokens,
+      skills,
+      mcp: [...mcp.values()]
+        .map((m) => ({ ...m, tools: [...m.tools] }))
+        .sort((x, y) => y.tokens - x.tokens || y.calls - x.calls),
+      toolSearch: { calls: tsCalls, tokens: tsTokens },
+    };
   }
 
   // Route one event from a subagent transcript to that agent's own model.
@@ -499,6 +622,20 @@ export class SessionModel {
         });
       }
     }
+    // Never-used share of the skill listing: paid at every session start
+    // for skills this project doesn't touch. Disabling unused plugins or
+    // skills is measured, direct savings.
+    const skilllistSuggs = [];
+    const ms = this.mcpSkillsReport();
+    const listedSkills = ms.skills.filter((x) => x.listed);
+    const unusedSkills = listedSkills.filter((x) => x.uses === 0);
+    const unusedShare = unusedSkills.reduce((n, x) => n + x.share, 0);
+    if (unusedShare >= 1500 && unusedSkills.length >= 3) {
+      skilllistSuggs.push({
+        kind: 'skilllist', impact: unusedShare, count: unusedSkills.length,
+        subject: `${unusedSkills.length} of ${listedSkills.length}`, context: null,
+      });
+    }
     // Repeated compaction: the session keeps outgrowing its window — every
     // event re-pays a summary plus the rebuilt context, and drops history.
     const compactSuggs = [];
@@ -510,7 +647,7 @@ export class SessionModel {
         count: this.compactions.length, subject: null, context: null,
       });
     }
-    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs, ...injectedSuggs, ...basefileSuggs, ...skillSuggs, ...compactSuggs);
+    out.push(...searchSuggs, ...rereadSuggs, ...fatdocSuggs, ...injectedSuggs, ...basefileSuggs, ...skillSuggs, ...skilllistSuggs, ...compactSuggs);
     out.sort(byImpact);
     out.splice(40);
     // Recache is mostly a workflow fact, not a docs fix — one entry, always last,
@@ -554,6 +691,7 @@ export class SessionModel {
       turns: this.turns.slice(-60),
       compactions: this.compactions,
       forecast: this.forecast(),
+      mcpSkills: this.mcpSkillsReport(),
       docs: this.mergedDocs().slice(0, 30),
       suggestions: this.suggestions(),
       baseFiles: this.baseFiles,

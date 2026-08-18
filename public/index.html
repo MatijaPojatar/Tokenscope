@@ -12,7 +12,10 @@
     <aside id="sidebar">
       <div class="brand-row">
         <div class="brand">tokenscope</div>
-        <button id="docs-btn" title="Docs across all sessions">docs</button>
+        <div class="brand-btns">
+          <button id="mcp-btn" title="MCP &amp; skills across all sessions">mcp</button>
+          <button id="docs-btn" title="Docs across all sessions">docs</button>
+        </div>
       </div>
       <div id="session-list"></div>
     </aside>
@@ -59,6 +62,10 @@
               <h2 data-sect="compaction">Compaction</h2>
               <div id="compact-rows" class="base-list"></div>
             </div>
+            <div id="mcp-wrap" class="sect" hidden>
+              <h2 data-sect="mcp">MCP &amp; skills</h2>
+              <div id="mcp-rows" class="base-list"></div>
+            </div>
             <div id="docs-lb-wrap" class="sect">
               <h2 data-sect="docs">Docs leaderboard</h2>
               <div id="doc-rows"></div>
@@ -74,12 +81,19 @@
           </section>
         </div>
       </div>
-      <div id="report" hidden>
+      <div id="report" class="report" hidden>
         <header class="report-head">
           <h1>Docs across sessions</h1>
           <span class="mono report-sub">every .md read by any session or agent in the loaded window</span>
         </header>
         <div id="report-rows"></div>
+      </div>
+      <div id="mcp-report" class="report" hidden>
+        <header class="report-head">
+          <h1>MCP &amp; skills across sessions</h1>
+          <span class="mono report-sub">every server call and skill use by any session or agent in the loaded window</span>
+        </header>
+        <div id="mcp-report-rows"></div>
       </div>
     </main>
   </div>
