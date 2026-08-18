@@ -3,7 +3,7 @@
 Notable changes to Tokenscope. Format follows [Keep a Changelog](https://keepachangelog.com);
 versions follow [SemVer](https://semver.org).
 
-## [Unreleased]
+## [0.3.0] — 2026-08-18
 
 ### Added
 
@@ -24,6 +24,11 @@ versions follow [SemVer](https://semver.org).
     belongs to never-used skills.
 - Subagent MCP calls, skill uses, and ToolSearch loads merge into the
   parent session's panel.
+- **MCP & skills across sessions** — an `mcp` button (next to `docs`)
+  opens a cross-session report: per-server calls, tokens, and session
+  counts; per-skill uses and listing shares; and the dead-weight cohorts
+  "configured · never called" and "paid in the listing · never used"
+  aggregated over every loaded session.
 - **Agent ROI.** Each subagent is matched to the Agent/Task call that
   spawned it (join: the agent transcript's first prompt equals the call's
   `input.prompt`, tie-broken by end-time proximity) and shows what its
@@ -41,11 +46,6 @@ versions follow [SemVer](https://semver.org).
   Every tool call in the timeline (session and agent) additionally shows
   `~X out` — the output spent issuing it: its payload estimate plus an
   even share of its API message's thinking remainder.
-- **MCP & skills across sessions** — an `mcp` button (next to `docs`)
-  opens a cross-session report: per-server calls, tokens, and session
-  counts; per-skill uses and listing shares; and the dead-weight cohorts
-  "configured · never called" and "paid in the listing · never used"
-  aggregated over every loaded session.
 
 ### Changed
 
@@ -117,5 +117,6 @@ Initial release.
 - Claude Code plugin packaging: marketplace manifest, SessionStart
   auto-boot hook, real-time event hooks, `/tokenscope:dashboard` skill.
 
+[0.3.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.3.0
 [0.2.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.2.0
 [0.1.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.1.0
