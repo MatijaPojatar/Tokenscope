@@ -531,6 +531,50 @@ h2 {
   font-family: var(--mono); font-size: 0.64rem; color: var(--muted);
   margin-top: 0.6rem;
 }
+
+/* codebase map — knowledge graph mode */
+#map-mode { margin-top: -0.35rem; }
+#map-report.graph-full { max-width: none; }
+/* graph mode: detail strip above, canvas full width */
+.map-body.graph-layout { flex-direction: column-reverse; }
+/* in column direction flex: 1 would zero the canvas height (flex-basis
+   beats the height property on the main axis) — let the JS height rule */
+.map-body.graph-layout .map-canvas { flex: none; width: 100%; }
+.map-body.graph-layout .map-detail {
+  flex: none; width: auto;
+  min-height: 70px; max-height: 220px; overflow-y: auto;
+}
+.map-body.graph-layout .map-detail > .md-row {
+  display: inline-flex; gap: 0.55rem;
+  border-bottom: none; margin-right: 1.6rem; padding: 0.1rem 0;
+}
+.map-body.graph-layout .map-detail .md-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 0 1.4rem; margin-top: 0.25rem;
+}
+.map-body.graph-layout .map-detail .md-path { margin: 0.4rem 0 0.1rem; }
+.graph-controls { display: inline-flex; gap: 0.45rem; align-items: center; margin-left: 0.5rem; }
+.graph-controls select {
+  font-family: var(--mono); font-size: 0.66rem;
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 0.18rem 0.35rem;
+}
+#graph-status { font-family: var(--mono); font-size: 0.64rem; color: var(--muted); }
+#graph-status.stale { color: #e39a3b; }
+.map-legend .swatch.sw-imports { background: var(--muted); height: 2px; width: 14px; border-radius: 0; }
+.map-legend .swatch.sw-mentions {
+  background: repeating-linear-gradient(90deg, var(--accent) 0 3px, transparent 3px 6px);
+  height: 2px; width: 14px; border-radius: 0;
+}
+.map-legend .swatch.sw-observed {
+  background: repeating-linear-gradient(90deg, var(--accent) 0 6px, transparent 6px 9px);
+  height: 3px; width: 14px; border-radius: 0;
+}
+.map-legend .swatch.sw-doc {
+  background: var(--panel-2); border: 1px solid var(--accent);
+  border-radius: 3px; width: 9px; height: 9px;
+}
 .map-legend span { display: inline-flex; align-items: center; gap: 0.3rem; }
 .map-summary { margin-top: 0.35rem; font-size: 0.66rem; color: var(--muted); }
 

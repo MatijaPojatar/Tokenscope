@@ -115,9 +115,21 @@
       <div id="map-report" class="report" hidden>
         <header class="report-head">
           <h1>Codebase map</h1>
-          <span class="mono report-sub">rectangle size = tokens spent reading the file, across every loaded session and agent</span>
+          <span id="map-sub" class="mono report-sub">rectangle size = tokens spent reading the file, across every loaded session and agent</span>
         </header>
         <div id="map-projects" class="map-projects"></div>
+        <div id="map-mode" class="map-projects">
+          <button id="mode-bubbles" class="active">bubbles</button>
+          <button id="mode-graph">graph</button>
+          <span id="graph-controls" class="graph-controls" hidden>
+            <button id="graph-build">build graph</button>
+            <select id="graph-gran" title="graph granularity">
+              <option value="folder">folder</option>
+              <option value="file">file</option>
+            </select>
+            <span id="graph-status"></span>
+          </span>
+        </div>
         <div class="map-body">
           <div id="map-canvas" class="map-canvas"></div>
           <aside id="map-detail" class="map-detail"></aside>
@@ -127,6 +139,9 @@
       </div>
     </main>
   </div>
+  <script src="/vendor/dagre.min.js"></script>
+  <script src="/vendor/cytoscape.min.js"></script>
+  <script src="/vendor/cytoscape-dagre.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

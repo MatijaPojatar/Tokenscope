@@ -30,6 +30,10 @@ const state = {
   fileMap: null,
   fileMapFetched: 0,
   mapProject: null, // selected project cwd on the map page
+  mapMode: 'bubbles', // 'bubbles' | 'graph' — codebase map display mode
+  graphs: {}, // lowercased cwd -> knowledge graph, null = none built yet
+  graphFetching: null, // lowercased cwd with a GET in flight
+  graphBuilding: false,
   scrub: null, // {id, i} — session + timeline index while time-scrubbing the gauge
   ctxGen: {}, // session id -> {running, msg} — context-file generation status
   planGen: {}, // session id -> {running, msg} — optimize-plan generation status
@@ -1460,6 +1464,15 @@ function stopMapSim() {
   }
 }
 
+let graphCy = null; // cytoscape instance behind the map's graph mode
+
+function destroyGraphCy() {
+  if (graphCy) {
+    try { graphCy.destroy(); } catch { /* already torn down */ }
+    graphCy = null;
+  }
+}
+
 const MAP_COLORS = [
   'var(--c-base)', 'var(--c-docsRead)', 'var(--c-output)', 'var(--c-agent)',
   'var(--c-search)', 'var(--c-conversation)', 'var(--c-codeRead)',
@@ -1468,6 +1481,7 @@ const MAP_COLORS = [
 
 function renderMap() {
   stopMapSim();
+  destroyGraphCy();
   const canvas = $('map-canvas');
   const projBox = $('map-projects');
   const legendBox = $('map-legend');
@@ -1475,6 +1489,16 @@ function renderMap() {
   canvas.replaceChildren();
   projBox.replaceChildren();
   legendBox.replaceChildren();
+  const graphMode = state.mapMode === 'graph';
+  canvas.parentElement.classList.toggle('graph-layout', graphMode);
+  $('map-report').classList.toggle('graph-full', graphMode);
+  $('mode-bubbles').classList.toggle('active', !graphMode);
+  $('mode-graph').classList.toggle('active', graphMode);
+  $('graph-controls').hidden = !graphMode;
+  if (!graphMode) $('graph-status').textContent = '';
+  $('map-sub').textContent = graphMode
+    ? 'import structure between modules — dependencies flow left → right, docs sit beside the code they cover'
+    : 'rectangle size = tokens spent reading the file, across every loaded session and agent';
   const report = state.fileMap;
   if (!report) {
     summary.textContent = 'loading…';
@@ -1496,6 +1520,11 @@ function renderMap() {
     projBox.append(b);
   }
   const proj = report.find((p) => p.cwd === state.mapProject);
+
+  if (graphMode) {
+    renderGraphMode(proj.cwd);
+    return;
+  }
 
   // group files by top-level directory relative to the project root
   const prefix = proj.cwd.replace(/\//g, '\\').replace(/\\+$/, '') + '\\';
@@ -1824,6 +1853,273 @@ function renderMapDetail(n, proj) {
   }
 }
 
+// Graph mode of the codebase map: modules as circles (area = source files),
+// docs as squares, edges from the project's built knowledge graph. Springs
+// along edges + collision, settled synchronously before first paint like
+// the bubble view; nodes stay draggable and their edges follow.
+function renderGraphMode(cwd) {
+  const canvas = $('map-canvas');
+  const legendBox = $('map-legend');
+  const summary = $('map-summary');
+  const status = $('graph-status');
+  const key = cwd.toLowerCase();
+  const graph = state.graphs[key];
+  status.textContent = '';
+  status.classList.remove('stale');
+  if (graph === undefined) {
+    summary.textContent = 'loading graph…';
+    fetchGraph(cwd);
+    renderGraphDetail(null, null);
+    return;
+  }
+  if (graph === null) {
+    summary.textContent =
+      'no graph for this project yet — build one (a few seconds; written to .claude\\context\\graph.json)';
+    renderGraphDetail(null, null);
+    return;
+  }
+  const m = graph.meta || {};
+  status.textContent = `built ${String(m.builtAt || '').slice(0, 10)}` +
+    (m.gitHead ? ` @ ${m.gitHead.slice(0, 8)}` : '') +
+    (m.behind == null ? ' · age unknown'
+      : m.behind === 0 ? ' · up to date'
+        : ` · ${m.behind} commit${m.behind === 1 ? '' : 's'} behind`);
+  if (m.behind > 0) status.classList.add('stale');
+
+  // modules by usage then size; docs only when they link to a kept module
+  const code = graph.nodes.filter((n) => n.kind === 'folder' || n.kind === 'file')
+    .sort((a, b) => (b.tokensRead || 0) - (a.tokensRead || 0) || (b.files || 0) - (a.files || 0));
+  const MAXN = 60;
+  const keep = new Map(code.slice(0, MAXN).map((n) => [n.id, n]));
+  const docIds = new Set(graph.nodes.filter((n) => n.kind === 'doc').map((n) => n.id));
+  const inner = (graph.edges || []).filter((e) => !String(e.to).startsWith('pkg:'));
+  const docKeep = new Map();
+  for (const e of inner) {
+    if (docIds.has(e.from) && keep.has(e.to) && !docKeep.has(e.from)) {
+      docKeep.set(e.from, { id: e.from, kind: 'doc' });
+    }
+  }
+  const has = (id) => keep.has(id) || docKeep.has(id);
+  const drawn = inner.filter((e) => has(e.from) && has(e.to));
+
+  if (typeof cytoscape === 'undefined' || typeof dagre === 'undefined') {
+    summary.textContent = 'vendor scripts missing (public\\vendor) — graph view unavailable';
+    renderGraphDetail(null, null);
+    return;
+  }
+  // colors resolved from CSS vars — cytoscape paints to its own canvas and
+  // cannot evaluate var() strings
+  const rootCss = getComputedStyle(document.documentElement);
+  const cvar = (name) => rootCss.getPropertyValue(name).trim() || '#8899aa';
+  const palette = MAP_COLORS.map((c) => cvar(c.slice(4, -1)));
+  const tops = [...new Set([...keep.values()].map((n) => n.id.split('/')[0]))];
+  const colorOf = (n) => palette[Math.max(0, tops.indexOf(n.id.split('/')[0])) % palette.length];
+  const ink = cvar('--ink');
+  const mutedC = cvar('--muted');
+  const accent = cvar('--accent');
+  const panel2 = cvar('--panel-2');
+  const mono = cvar('--mono') || 'monospace';
+
+  // full-width canvas fills the viewport below the detail strip
+  const top = canvas.getBoundingClientRect().top;
+  canvas.style.height = Math.max(600, Math.round(window.innerHeight - top - 90)) + 'px';
+  const maxW = Math.max(2, ...drawn.filter((e) => e.kind === 'imports').map((e) => e.weight));
+  const elems = [];
+  for (const n of keep.values()) {
+    elems.push({ data: {
+      id: n.id,
+      label: n.id === '.' ? '(root)' : n.id.split('/').pop(),
+      size: Math.min(80, Math.max(22, 12 * Math.pow(n.files || 1, 0.25))),
+      color: colorOf(n),
+      kind: 'code',
+    } });
+  }
+  for (const d of docKeep.values()) {
+    elems.push({ data: { id: d.id, label: d.id.split('/').pop(), kind: 'doc' } });
+  }
+  drawn.forEach((e, i) => elems.push({ data: {
+    id: 'ge' + i, source: e.from, target: e.to, kind: e.kind, weight: e.weight,
+  } }));
+
+  // cytoscape renders and handles all interaction (pan, zoom, drag);
+  // cytoscape-dagre lays the import DAG out in left→right ranks
+  graphCy = cytoscape({
+    container: canvas,
+    elements: elems,
+    minZoom: 0.15,
+    maxZoom: 3,
+    wheelSensitivity: 0.2,
+    style: [
+      { selector: 'node[kind = "code"]',
+        style: {
+          width: 'data(size)',
+          height: 'data(size)',
+          'background-color': 'data(color)',
+          'background-opacity': 0.9,
+          label: 'data(label)',
+          'font-size': 9,
+          'font-family': mono,
+          color: ink,
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'text-wrap': 'ellipsis',
+          'text-max-width': 78,
+        } },
+      { selector: 'node[kind = "doc"]',
+        style: {
+          shape: 'round-rectangle',
+          width: 30,
+          height: 20,
+          'background-color': panel2,
+          'border-width': 1.5,
+          'border-color': accent,
+          label: 'data(label)',
+          'font-size': 8,
+          'font-family': mono,
+          color: ink,
+          'text-valign': 'bottom',
+          'text-margin-y': 4,
+        } },
+      { selector: 'edge',
+        style: { 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.75 } },
+      { selector: 'edge[kind = "imports"]',
+        style: {
+          width: `mapData(weight, 1, ${maxW}, 1, 5)`,
+          'line-color': mutedC,
+          'target-arrow-color': mutedC,
+          opacity: 0.45,
+        } },
+      { selector: 'edge[kind = "mentions"]',
+        style: { width: 1.2, 'line-style': 'dotted', 'line-color': accent, 'target-arrow-shape': 'none', opacity: 0.7 } },
+      { selector: 'edge[kind = "observed"]',
+        style: { width: 2.2, 'line-style': 'dashed', 'line-color': accent, 'target-arrow-shape': 'none', opacity: 0.9 } },
+      { selector: 'node:selected', style: { 'border-width': 2, 'border-color': ink } },
+      { selector: '.dimmed', style: { opacity: 0.1 } },
+    ],
+    layout: { name: 'dagre', rankDir: 'LR', nodeSep: 18, rankSep: 85, edgeSep: 8, padding: 14 },
+  });
+  // hover isolates a node's neighborhood — the main hairball antidote
+  graphCy.on('mouseover', 'node', (evt) => {
+    graphCy.elements().not(evt.target.closedNeighborhood()).addClass('dimmed');
+  });
+  graphCy.on('mouseout', 'node', () => graphCy.elements().removeClass('dimmed'));
+  graphCy.on('tap', 'node', (evt) => {
+    const n = (graph.nodes || []).find((x) => x.id === evt.target.id());
+    renderGraphDetail(n || null, graph);
+  });
+  graphCy.on('tap', (evt) => {
+    if (evt.target === graphCy) renderGraphDetail(null, graph);
+  });
+  renderGraphDetail(null, graph);
+
+
+  const leg = (cls, label) => {
+    const item = el('span');
+    item.append(el('i', 'swatch ' + cls), document.createTextNode(label));
+    legendBox.append(item);
+  };
+  leg('sw-imports', 'imports');
+  if (drawn.some((e) => e.kind === 'mentions')) leg('sw-mentions', 'doc mentions');
+  if (drawn.some((e) => e.kind === 'observed')) leg('sw-observed', 'doc used with code');
+  if (docKeep.size > 0) leg('sw-doc', 'doc');
+
+  summary.textContent =
+    `${keep.size} modules · ${drawn.filter((e) => e.kind === 'imports').length} import edges · ` +
+    `${docKeep.size} doc${docKeep.size === 1 ? '' : 's'} linked · granularity ${m.granularity}` +
+    (code.length > keep.size ? ` · top ${keep.size} of ${code.length} modules shown` : '');
+}
+
+// Detail panel for graph mode: a module's dependency lists and linked docs,
+// or a doc's routed code areas with their evidence.
+function renderGraphDetail(n, graph) {
+  const box = $('map-detail');
+  box.replaceChildren();
+  const kv = (k, v) => {
+    const r = el('div', 'md-row');
+    r.append(el('span', null, k), el('b', null, v));
+    return r;
+  };
+  if (!n) {
+    box.append(el('div', 'md-hint', graph
+      ? 'Click a node for details. Drag nodes to rearrange, drag the background to pan, scroll to zoom. Hovering a node isolates its neighborhood.\n\nCircles are modules (area = source files), squares are docs. Solid arrows = imports (left → right), dotted = doc mentions its area, dashed = doc observed in use with that code.'
+      : 'Build a knowledge graph to see module structure, doc links, and measured usage in one picture.\n\nThe graph is written to .claude\\context\\graph.json; a codemap.md orientation doc can be generated from it.'));
+    return;
+  }
+  box.append(
+    el('div', 'md-name', n.id === '.' ? '(root)' : n.id),
+    el('div', 'md-path', n.kind === 'doc' ? 'doc' : `module · ${n.kind} granularity`),
+  );
+  if (n.kind !== 'doc') {
+    if (n.files) box.append(kv('source files', String(n.files)));
+    if (n.tokensRead) box.append(kv('tokens read', fmtTok(n.tokensRead)));
+    if (n.reads) box.append(kv('reads', String(n.reads)));
+  }
+  const outs = [];
+  const ins = [];
+  const pkgs = [];
+  const docs = [];
+  for (const e of graph.edges || []) {
+    if (e.from === n.id) {
+      if (String(e.to).startsWith('pkg:')) pkgs.push(e);
+      else if (e.kind === 'imports') outs.push(e);
+      else docs.push(e);
+    } else if (e.to === n.id && e.kind === 'imports') {
+      ins.push(e);
+    } else if (e.to === n.id) {
+      docs.push(e);
+    }
+  }
+  const section = (title, list, fmt) => {
+    if (list.length === 0) return;
+    box.append(el('div', 'md-path', title));
+    const wrap = el('div', 'md-list');
+    for (const e of list.sort((a, b) => b.weight - a.weight).slice(0, 8)) wrap.append(fmt(e));
+    box.append(wrap);
+  };
+  section('imports from', outs, (e) => kv(e.to, String(e.weight)));
+  section('imported by', ins, (e) => kv(e.from, String(e.weight)));
+  section('external packages', pkgs, (e) => kv(e.to.slice(4), String(e.weight)));
+  section(n.kind === 'doc' ? 'covers code in' : 'linked docs', docs, (e) => kv(
+    n.kind === 'doc' ? e.to : e.from,
+    e.kind === 'observed' ? `${e.sessions ?? e.weight} sess` : 'mention'));
+}
+
+async function fetchGraph(cwd) {
+  const key = cwd.toLowerCase();
+  if (state.graphFetching === key) return;
+  state.graphFetching = key;
+  try {
+    const res = await fetch('/api/graph?cwd=' + encodeURIComponent(cwd));
+    state.graphs[key] = res.ok ? await res.json() : null;
+  } catch {
+    state.graphs[key] = null; // collector restarting — shows the build hint
+  }
+  state.graphFetching = null;
+  if (state.view === 'map' && state.mapMode === 'graph') renderMap();
+}
+
+async function buildGraphNow(cwd) {
+  if (state.graphBuilding) return;
+  state.graphBuilding = true;
+  $('graph-build').disabled = true;
+  $('graph-status').textContent = 'building… (large repos take a few seconds)';
+  try {
+    const res = await fetch('/api/graph', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd, granularity: $('graph-gran').value }),
+    });
+    const data = await res.json();
+    if (res.ok) state.graphs[cwd.toLowerCase()] = data.graph;
+    else $('graph-status').textContent = data.error || 'build failed';
+  } catch {
+    $('graph-status').textContent = 'build failed — is the collector running?';
+  }
+  state.graphBuilding = false;
+  $('graph-build').disabled = false;
+  if (state.view === 'map' && state.mapMode === 'graph') renderMap();
+}
+
 async function fetchFileMap(force) {
   if (!force && Date.now() - state.fileMapFetched < 15000) return;
   state.fileMapFetched = Date.now();
@@ -1873,7 +2169,10 @@ function render() {
   $('mcp-report').hidden = state.view !== 'mcp';
   $('trends-report').hidden = state.view !== 'trends';
   $('map-report').hidden = state.view !== 'map';
-  if (state.view !== 'map') stopMapSim();
+  if (state.view !== 'map') {
+    stopMapSim();
+    destroyGraphCy();
+  }
   if (state.view !== 'session') {
     $('empty').hidden = true;
     $('detail').hidden = true;
@@ -1952,6 +2251,10 @@ $('map-btn').onclick = () => {
   render();
   $('map-btn').blur();
 };
+
+$('mode-bubbles').onclick = () => { state.mapMode = 'bubbles'; renderMap(); };
+$('mode-graph').onclick = () => { state.mapMode = 'graph'; renderMap(); };
+$('graph-build').onclick = () => { if (state.mapProject) buildGraphNow(state.mapProject); };
 
 window.addEventListener('resize', () => {
   if (state.view === 'map') renderMap();

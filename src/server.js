@@ -16,6 +16,8 @@ import { SessionWatcher, defaultRoot } from './watcher.js';
 import { extractApiRequests } from './otel.js';
 import { scanBaseContext, scanMcpConfig } from './basescan.js';
 import { RollupStore, defaultDataDir } from './rollup.js';
+import { buildGraph, overlayUsage, linkDocs, gitBehind } from './graph.js';
+import { renderCodemap } from './codemap.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -152,6 +154,49 @@ function runClaudeToFile(s, dataDir, holder, prompt, payload, filePrefix) {
   });
 }
 
+// Doc roster for graph linking: base-context files (CLAUDE.md + @-imports)
+// plus every .claude markdown, minus generated context artifacts. Contents
+// are read here; the graph helpers stay pure.
+async function docsRoster(cwd) {
+  const seen = new Map(); // lowercased abs path -> {path, text}
+  const add = async (p) => {
+    const key = path.resolve(p).toLowerCase();
+    if (seen.has(key)) return;
+    try {
+      seen.set(key, { path: path.resolve(p), text: await fsp.readFile(p, 'utf8') });
+    } catch { /* unreadable — skip */ }
+  };
+  for (const f of await scanBaseContext(cwd)) {
+    if (/\.(md|mdx)$/i.test(f.path)) await add(f.path);
+  }
+  const dir = path.join(cwd, '.claude');
+  try {
+    const entries = await fsp.readdir(dir, { recursive: true, withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isFile() || !/\.(md|mdx)$/i.test(e.name)) continue;
+      const full = path.join(e.parentPath || dir, e.name);
+      if (/[\\/]context[\\/]/i.test(full)) continue; // our own output
+      await add(full);
+    }
+  } catch { /* no .claude dir */ }
+  return [...seen.values()];
+}
+
+// Per-session (docs read, files read) pairs for a project — the evidence
+// behind observed doc→folder edges.
+function graphPairs(cwd) {
+  const want = String(cwd).replace(/\//g, '\\').toLowerCase();
+  const out = [];
+  for (const s of store.sessions.values()) {
+    if (!s.cwd || String(s.cwd).replace(/\//g, '\\').toLowerCase() !== want) continue;
+    out.push({ docs: s.mergedDocs(), files: s.mergedFileReads() });
+  }
+  return out;
+}
+
+const graphFile = (cwd) => path.join(cwd, '.claude', 'context', 'graph.json');
+const graphInFlight = new Set(); // normalized cwds with a build running
+
 async function serveStatic(res, urlPath) {
   const rel = urlPath === '/' ? 'index.html' : urlPath.slice(1);
   const file = path.join(PUBLIC_DIR, rel);
@@ -219,6 +264,88 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(rollups.history(
       [...store.sessions.values()].map((s) => s.rollupSummary()))));
+    return;
+  }
+
+  // Knowledge graph: build (POST) writes <cwd>\.claude\context\graph.json —
+  // static import structure + usage overlay + doc links; GET returns the
+  // saved artifact. Codemap renders the graph into a token-budgeted
+  // markdown orientation map next to it.
+  if (url.pathname === '/api/graph' && req.method === 'GET') {
+    const cwd = url.searchParams.get('cwd') || '';
+    try {
+      const graph = JSON.parse(await fsp.readFile(graphFile(cwd), 'utf8'));
+      graph.meta.behind = gitBehind(cwd, graph.meta.gitHead); // response-only
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(graph));
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end('{"error":"no graph built for this project yet"}');
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/graph' && req.method === 'POST') {
+    let body = {};
+    try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* handled below */ }
+    const cwd = body.cwd && fs.existsSync(body.cwd) ? path.resolve(body.cwd) : null;
+    if (!cwd) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end('{"error":"cwd missing or not a directory"}');
+      return;
+    }
+    const key = cwd.toLowerCase();
+    if (graphInFlight.has(key)) {
+      res.writeHead(409, { 'Content-Type': 'application/json' });
+      res.end('{"error":"a graph build for this project is already running"}');
+      return;
+    }
+    graphInFlight.add(key);
+    try {
+      const graph = await buildGraph(cwd, {
+        granularity: body.granularity === 'file' ? 'file' : 'folder',
+        maxNodes: Number(body.maxNodes) > 0 ? Number(body.maxNodes) : 40,
+      });
+      overlayUsage(graph, store.fileReport());
+      linkDocs(graph, await docsRoster(cwd), graphPairs(cwd));
+      const file = graphFile(cwd);
+      await fsp.mkdir(path.dirname(file), { recursive: true });
+      await fsp.writeFile(file, JSON.stringify(graph, null, 1) + '\n');
+      graph.meta.behind = 0; // response-only, never persisted
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, path: file, graph }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String((e && e.message) || e) }));
+    } finally {
+      graphInFlight.delete(key);
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/graph/codemap' && req.method === 'POST') {
+    let body = {};
+    try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* handled below */ }
+    const cwd = body.cwd || '';
+    let graph;
+    try {
+      graph = JSON.parse(await fsp.readFile(graphFile(cwd), 'utf8'));
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end('{"error":"no graph for this project — build it first"}');
+      return;
+    }
+    try {
+      const budget = Number(body.tokenBudget) > 0 ? Number(body.tokenBudget) : 2000;
+      const { text, tokens } = renderCodemap(graph, { tokenBudget: budget });
+      const file = path.join(cwd, '.claude', 'context', 'codemap.md');
+      await fsp.writeFile(file, text);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, path: file, tokens }));
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: String((e && e.message) || e) }));
+    }
     return;
   }
 

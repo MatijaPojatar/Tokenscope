@@ -100,7 +100,9 @@ It runs as a local web page next to your terminal and shows, for every session:
   history accrues from install on and outlives the live session window —
   still zero dependencies.
 
-Zero dependencies. Node 18+.
+Zero npm dependencies. Node 18+. (The dashboard vendors three static UI
+assets — Cytoscape.js for graph rendering, dagre and its Cytoscape adapter
+for layered layout — served like any other file in `public/`.)
 
 ## Install
 

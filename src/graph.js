@@ -3,7 +3,8 @@
 // are aggregated up to folder→folder at a node-count target, so the folder
 // graph stays small enough to inject into context as an orientation map.
 // This module is pure (disk in, graph out); usage weighting and doc linking
-// are applied by the server on top of what it returns.
+// are data-in data-out helpers here (overlayUsage, linkDocs) — the server
+// feeds them measured session data and doc contents.
 //
 // Bare specifiers are resolved through the nearest tsconfig/jsconfig
 // baseUrl and paths (prefix patterns only), so apps that import from a
@@ -372,6 +373,7 @@ export async function buildGraph(cwd, {
   }));
 
   const meta = {
+    root,
     builtAt: new Date().toISOString(),
     gitHead: gitHead(root),
     granularity,
@@ -387,10 +389,188 @@ export async function buildGraph(cwd, {
   return { meta, nodes, edges };
 }
 
+// ---------------------------------------------------------- usage overlay
+
+const relUnder = (root, p) => {
+  const rel = path.relative(root, String(p));
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return rel.split(path.sep).join('/');
+};
+
+// Project-relative path -> graph node. Folder graphs walk up to the nearest
+// surviving ancestor: collapse merges deepest-first, so that ancestor is
+// exactly the canonical folder the path's edges were aggregated into.
+// strict drops lookups that only land on the root — a junk string with a
+// slash in it must not count as a reference to the whole repo.
+function nodeLookup(graph) {
+  const byId = new Map();
+  for (const n of graph.nodes) {
+    if (n.kind === 'folder' || n.kind === 'file') byId.set(n.id.toLowerCase(), n);
+  }
+  const isFile = graph.meta.granularity === 'file';
+  return (rel, { strict = false } = {}) => {
+    let key = String(rel).replace(/\/+$/, '').toLowerCase() || '.';
+    if (isFile) return byId.get(key) || null;
+    while (true) {
+      const hit = byId.get(key);
+      if (hit) return strict && hit.id === '.' && key !== rel.toLowerCase() ? null : hit;
+      if (key === '.') return null;
+      key = key.includes('/') ? key.slice(0, key.lastIndexOf('/')) : '.';
+    }
+  };
+}
+
+const dirOf = (rel) => (rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : '.');
+
+// Fold measured per-file read tokens (the store's fileReport()) onto graph
+// nodes: circle sizes for the UI, "~X tok read" for the codemap.
+export function overlayUsage(graph, projects) {
+  const root = graph.meta.root;
+  const want = String(root).replace(/\//g, '\\').toLowerCase();
+  const proj = (projects || []).find(
+    (p) => String(p.cwd).replace(/\//g, '\\').toLowerCase() === want);
+  if (!proj) return graph;
+  const lookup = nodeLookup(graph);
+  const isFile = graph.meta.granularity === 'file';
+  for (const f of proj.files || []) {
+    const rel = relUnder(root, f.path);
+    if (!rel) continue;
+    const node = lookup(isFile ? rel : dirOf(rel));
+    if (!node) continue;
+    node.tokensRead = (node.tokensRead || 0) + f.tokens;
+    node.reads = (node.reads || 0) + f.reads;
+  }
+  graph.meta.usage = { sessions: proj.sessions, appliedAt: new Date().toISOString() };
+  return graph;
+}
+
+// ------------------------------------------------------------ doc linking
+
+// Path-like strings in a doc: backticked spans plus bare segment/segment
+// tokens. Only candidates that resolve to a real graph node (or another
+// doc) become edges — the existence check drops prose false positives.
+export function extractPathCandidates(text) {
+  const out = new Set();
+  const res = [
+    /`([^`\n]{2,120})`/g,
+    /(?:^|[\s("'@])((?:\.{0,2}\/)?(?:[\w.-]+[\\/])+[\w.*-]+)/g,
+  ];
+  for (const re of res) {
+    for (const m of text.matchAll(re)) {
+      let c = m[1].trim().replace(/[.,;:!?)\]}'"]+$/, '');
+      c = c.replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+      if (!c || c.includes('://') || c.startsWith('..')) continue;
+      out.add(c);
+    }
+  }
+  return [...out];
+}
+
+// Add doc nodes and doc→code edges to a graph.
+//   docs:  [{path, text}]           — the roster, contents read by caller
+//   pairs: [{docs, files}]          — per matching session, mergedDocs()
+//                                     and mergedFileReads() shapes
+// 'mentions' edges are static (path named in the doc body); 'observed'
+// edges are behavioral (doc read in sessions whose reads concentrated in
+// that folder) and carry {sessions, tokens} as evidence.
+export function linkDocs(graph, docs = [], pairs = []) {
+  const root = graph.meta.root;
+  const lookup = nodeLookup(graph);
+  const docNodes = new Map(); // lowercased rel id -> node
+  for (const d of docs) {
+    const rel = relUnder(root, d.path);
+    if (!rel || docNodes.has(rel.toLowerCase())) continue;
+    docNodes.set(rel.toLowerCase(), { id: rel, kind: 'doc' });
+  }
+
+  const edges = new Map(); // 'from|to|kind' -> edge
+  const bump = (from, to, kind) => {
+    const key = from + '|' + to + '|' + kind;
+    let e = edges.get(key);
+    if (!e) {
+      e = { from, to, kind, weight: 0 };
+      edges.set(key, e);
+    }
+    e.weight += 1;
+    return e;
+  };
+
+  for (const d of docs) {
+    const rel = relUnder(root, d.path);
+    if (!rel) continue;
+    const docId = docNodes.get(rel.toLowerCase()).id;
+    for (const cand of extractPathCandidates(d.text || '')) {
+      const other = docNodes.get(cand.toLowerCase());
+      if (other) {
+        if (other.id !== docId) bump(docId, other.id, 'mentions');
+        continue;
+      }
+      const n = lookup(cand, { strict: true });
+      if (n) bump(docId, n.id, 'mentions');
+    }
+  }
+
+  const MIN_FOLDER_TOKENS = 1000; // folder barely touched that session
+  const isFile = graph.meta.granularity === 'file';
+  for (const s of pairs) {
+    const folderTok = new Map(); // node id -> tokens read there this session
+    for (const f of s.files || []) {
+      const rel = relUnder(root, f.path);
+      if (!rel) continue;
+      const n = lookup(isFile ? rel : dirOf(rel));
+      if (n) folderTok.set(n.id, (folderTok.get(n.id) || 0) + f.tokens);
+    }
+    for (const doc of s.docs || []) {
+      const rel = relUnder(root, doc.path);
+      const dn = rel && docNodes.get(rel.toLowerCase());
+      if (!dn) continue;
+      for (const [fid, tok] of folderTok) {
+        if (tok < MIN_FOLDER_TOKENS) continue;
+        const e = bump(dn.id, fid, 'observed');
+        e.sessions = (e.sessions || 0) + 1;
+        e.tokens = (e.tokens || 0) + tok;
+      }
+    }
+  }
+
+  // One co-occurring session is noise; two, or one with heavy overlap, is
+  // evidence. weight becomes the session count for observed edges.
+  let mentions = 0;
+  let observed = 0;
+  for (const e of edges.values()) {
+    if (e.kind === 'observed') {
+      if (e.sessions < 2 && e.tokens < 10000) continue;
+      e.weight = e.sessions;
+      observed += 1;
+    } else {
+      mentions += 1;
+    }
+    graph.edges.push(e);
+  }
+  graph.nodes.push(...[...docNodes.values()].sort((a, b) => a.id.localeCompare(b.id)));
+  graph.meta.docs = { count: docNodes.size, mentions, observed };
+  return graph;
+}
+
 function gitHead(cwd) {
   try {
     const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8', windowsHide: true });
     return r.status === 0 ? r.stdout.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Commits on HEAD since the graph was built — the staleness signal. null
+// means "age unknown" (no git, unknown sha): shown as such, never silence.
+export function gitBehind(cwd, head) {
+  if (!head) return null;
+  try {
+    const r = spawnSync('git', ['rev-list', '--count', head + '..HEAD'],
+      { cwd, encoding: 'utf8', windowsHide: true });
+    if (r.status !== 0) return null;
+    const n = Number(r.stdout.trim());
+    return Number.isFinite(n) ? n : null;
   } catch {
     return null;
   }
