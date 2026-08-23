@@ -21,12 +21,13 @@ It runs as a local web page next to your terminal and shows, for every session:
   context the harness injects during the session (hook output, re-injected
   edited files, skill listings, reminders), measured from usage. Every row
   expands to sizes, dates, injection counts, and observed-use signals.
-- **Optimize** — suggestions computed from actual token spend, seven kinds:
+- **Optimize** — suggestions computed from actual token spend:
   expensive search patterns (→ document the concept), files re-read many
   times (→ summarize or split), fat docs (→ split), heavy harness injections
   (→ trim hook output), always-loaded base files (→ move out of `@`-imports),
-  cache re-writes after idle gaps, and repeated commands (→ package as a
-  skill or hook). Clicking a finding highlights its calls in the timeline,
+  cache re-writes after idle gaps, repeated commands (→ package as a
+  skill or hook), skill listings never used, fat agent returns, and
+  repeated compaction. Clicking a finding highlights its calls in the timeline,
   and clicking a flagged call focuses its finding. A `generate plan`
   button turns the findings into a prioritized action plan via your local
   `claude` CLI, saved under the project's `.claude\context\`.
@@ -46,7 +47,7 @@ It runs as a local web page next to your terminal and shows, for every session:
   with observed `mcp__server__tool` calls — a configured server with zero
   calls is the flag. ToolSearch loads of deferred tool schemas are measured
   too. A never-used share of the listing raises an Optimize finding, and
-  the `mcp` button aggregates servers and skills across every loaded
+  the `mcp` page aggregates servers and skills across every loaded
   session — with "configured · never called" and "paid in the listing ·
   never used" cohorts as the cross-session dead-weight signals.
 - **Docs leaderboard** — which `.md` files (project `.claude\` docs and
@@ -61,14 +62,31 @@ It runs as a local web page next to your terminal and shows, for every session:
   result added to the parent's context (matched via the spawning call's
   prompt), with a per-session compression total and an Optimize finding
   when an agent returns a fat payload instead of conclusions.
-- **Codebase map** — the `map` button renders a draggable bubble map of
+- **Codebase map** — the `map` page renders a draggable bubble map of
   each project: circle area = tokens spent reading that file across every
   loaded session and agent, clustered and colored by top-level directory
   via a small force simulation. Drag bubbles to rearrange (drop pins,
   double-click unpins). Shows at a glance where Claude "lives" in the
   repo and which fat files keep getting re-read. Hand-rolled physics,
   zero dependencies.
-- **Docs across sessions** — the `docs` button aggregates every doc read by
+- **Knowledge graph** — the `graph` page builds a per-project graph from
+  static import structure (folder or file granularity), links docs to the
+  code they cover (static `mentions` plus behavioral `observed` edges from
+  real sessions), and overlays measured usage: modules sessions actually
+  read get an amber halo and a size boost. Built from the page's build
+  panel (with a live phase-by-phase progress bar), saved to
+  `<project>\.claude\context\graph.json` with a git-staleness stamp,
+  rendered with Cytoscape — pan/zoom/drag, hover isolates a neighborhood,
+  search shows matches plus their import neighbors. A token-budgeted
+  `codemap.md` orientation doc can be generated from the same artifact.
+- **Ask the graph, skip the grep** — the `graph-nav` skill lets Claude
+  answer structure questions from the built graph instead of searching:
+  blast radius (`impact`), dependencies (`deps`), shortest import chain
+  (`path`), usage hot spots (`hot`), doc routing, and a codemap
+  `overview` — each a ~15-line answer served by `GET /api/graph/query`
+  (or `node src/graph.js <mode> <project> …` when the collector is down).
+  Content search stays grep's job; the skill says so explicitly.
+- **Docs across sessions** — the `docs` page aggregates every doc read by
   any session or agent in the loaded window, plus a "loaded every session ·
   never read or edited" section: the strongest observable dead-weight signal
   for `@`-imported docs.
@@ -93,12 +111,16 @@ It runs as a local web page next to your terminal and shows, for every session:
   trends page totals the ledger across all rolled-up sessions. Prices come
   from a small list-price table per model; unknown models fall back to
   token-only figures.
-- **Trends** — the `trends` button charts rolled-up history: tokens and
+- **Trends** — the `trends` page charts rolled-up history: tokens and
   cost per day, per-project and per-model totals, and average base context
   per session over time. Compact session summaries are appended to
   `~\.tokenscope\rollups.jsonl` (latest snapshot per session wins), so
   history accrues from install on and outlives the live session window —
   still zero dependencies.
+- **Home & guide** — the landing page totals the loaded window (live
+  sessions, tokens, cost, today's spend, rate-limit fill) with one-click
+  links into live sessions and every page; a built-in `guide` page
+  documents how each feature works.
 
 Zero npm dependencies. Node 18+. (The dashboard vendors three static UI
 assets — Cytoscape.js for graph rendering, dagre and its Cytoscape adapter
@@ -203,6 +225,8 @@ src/adapter.js           transcript JSONL parsing — the ONLY format-aware modu
 src/attribution.js       usage-delta attribution engine, suggestions (sessions + agents)
 src/basescan.js          base-context disk scan, follows CLAUDE.md @-imports
 src/store.js             session store + SSE broadcast + cross-session docs report
+src/graph.js             knowledge graph: builder, doc linking, query engine + CLI
+src/codemap.js           graph → token-budgeted markdown orientation map
 src/rollup.js            persistent session rollups + trends aggregation
 src/pricing.js           model list prices + cache billing multipliers
 src/otel.js              minimal OTLP/HTTP JSON logs parser

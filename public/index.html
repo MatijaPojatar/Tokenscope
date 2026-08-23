@@ -248,9 +248,17 @@
         <div class="stag">
 
         <div class="sect closed">
+          <h2 data-sect="g-home">Home</h2>
+          <div class="guide-body">
+            <p>The landing page — click the <b>tokenscope</b> brand in the sidebar to return to it from anywhere. Stat tiles total the loaded window: sessions live right now, session count, tokens and cost across the 48-hour window, <b>today</b> (from the trends rollups), and your 5-hour / 7-day rate-limit fill when the statusline integration reports it — all updating in real time.</p>
+            <p>Below the tiles: cards for every live session (or the latest one when nothing is live) that open the session directly, and quick links to every page.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
           <h2 data-sect="g-sessions">Sessions</h2>
           <div class="guide-body">
-            <p>The landing page lists every session in the loaded window, newest first. Each card shows:</p>
+            <p>The sessions page lists every session in the loaded window, newest first. Each card shows:</p>
             <ul>
               <li><b>green pulsing dot</b> — activity in the last 2 minutes (live)</li>
               <li><b>context bar</b> — current context vs the model's window; turns orange past 75% full, red past 90%</li>
@@ -396,14 +404,14 @@
         <div class="sect closed">
           <h2 data-sect="g-graph">Knowledge graph</h2>
           <div class="guide-body">
-            <p><b>build graph</b> parses the selected project (at <b>folder</b> or <b>file</b> granularity) into modules and import edges, links your docs to the code they cover, and saves the result to <code>.claude\context\graph.json</code>. The status shows when it was built, at which commit, and how many commits behind it has fallen.</p>
+            <p><b>build graph</b> parses the selected project (at <b>folder</b> or <b>file</b> granularity) into modules and import edges, links your docs to the code they cover, and saves the result to <code>.claude\context\graph.json</code>. A progress bar tracks the build phases (scan → parse imports → link docs &amp; usage → save). The status shows when it was built, at which commit, and how many commits behind it has fallen.</p>
             <ul>
               <li><b>circles</b> — modules, area = number of source files; <b>squares</b> — docs</li>
               <li><b>amber halo + size boost</b> — tokens sessions spent reading that module in the loaded window, relative to the hottest module on screen</li>
               <li><b>solid arrows</b> — imports, flowing top → bottom</li>
               <li><b>dotted</b> — a doc mentions that code area; <b>dashed</b> — the doc was observed in use together with it</li>
             </ul>
-            <p>Drag nodes, drag the background to pan, scroll to zoom. Hovering isolates a node's neighborhood; clicking shows its dependency lists and linked docs. The <b>filter</b> shows matching paths plus their direct import neighbors. What fits on screen is picked by structural importance — filter to reach the rest. Very large graphs use a fast banded layout; filtering restores the fully layered one.</p>
+            <p>Drag nodes, drag the background to pan, scroll to zoom. Hovering isolates a node's neighborhood; clicking shows its dependency lists and linked docs. The <b>search box</b> shows matching paths plus their direct import neighbors. What fits on screen is picked by structural importance — search to reach the rest. Very large graphs use a fast banded layout; searching restores the fully layered one.</p>
             <p><b>Claude can query it too</b>: the plugin's <code>graph-nav</code> skill answers structure questions (impact, dependencies, shortest chain, doc routing, hot modules) from the built graph via <code>GET /api/graph/query</code> — ~15 lines of context instead of grep fan-outs and file reads. Tell Claude "use the graph" or let the skill trigger on its own.</p>
           </div>
         </div>
