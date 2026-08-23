@@ -198,10 +198,13 @@ try { sectPrefs = JSON.parse(localStorage.getItem('tokenscope.sections') || '{}'
 for (const h of document.querySelectorAll('.sect > h2')) {
   const wrap = h.parentElement;
   const key = h.dataset.sect;
-  if (sectPrefs[key]) wrap.classList.add('closed');
+  // a `closed` class in the markup is the default (guide sections start
+  // collapsed); a stored preference wins either way
+  const closed = sectPrefs[key] ?? wrap.classList.contains('closed');
+  wrap.classList.toggle('closed', closed);
   h.tabIndex = 0;
   h.setAttribute('role', 'button');
-  h.setAttribute('aria-expanded', String(!sectPrefs[key]));
+  h.setAttribute('aria-expanded', String(!closed));
   const tgl = () => {
     const closed = wrap.classList.toggle('closed');
     sectPrefs[key] = closed;
@@ -2372,7 +2375,7 @@ async function fetchMcpReport(force) {
 // Live SSE re-renders inside an already-open view never replay them.
 const ENTRY_HOSTS = {
   sessions: 'sessions-page', session: 'detail', docs: 'report', mcp: 'mcp-report',
-  trends: 'trends-report', map: 'map-report', graph: 'graph-report',
+  trends: 'trends-report', map: 'map-report', graph: 'graph-report', guide: 'guide-report',
 };
 let entryKey = null;
 let entryTimer = null;
@@ -2408,12 +2411,14 @@ function render() {
   $('nav-trends').classList.toggle('active', state.view === 'trends');
   $('nav-map').classList.toggle('active', state.view === 'map');
   $('nav-graph').classList.toggle('active', state.view === 'graph');
+  $('nav-guide').classList.toggle('active', state.view === 'guide');
   $('sessions-page').hidden = state.view !== 'sessions';
   $('report').hidden = state.view !== 'docs';
   $('mcp-report').hidden = state.view !== 'mcp';
   $('trends-report').hidden = state.view !== 'trends';
   $('map-report').hidden = state.view !== 'map';
   $('graph-report').hidden = state.view !== 'graph';
+  $('guide-report').hidden = state.view !== 'guide';
   if (state.view !== 'map') stopMapSim();
   if (state.view !== 'graph') destroyGraphCy();
   if (state.view !== 'session') {
@@ -2426,7 +2431,8 @@ function render() {
     // an already-mounted graph is interactive — background render() calls
     // (SSE list events) must not relayout it and drop the user's pan/zoom
     else if (state.view === 'graph') { if (!graphCy) renderGraphPage(); }
-    else renderMap();
+    else if (state.view === 'map') renderMap();
+    // 'guide' is static content — nothing to render
   } else {
     renderDetail();
   }
@@ -2485,6 +2491,7 @@ wireNav('nav-mcp', 'mcp', fetchMcpReport);
 wireNav('nav-trends', 'trends', fetchTrends);
 wireNav('nav-map', 'map', fetchFileMap);
 wireNav('nav-graph', 'graph', fetchFileMap);
+wireNav('nav-guide', 'guide', null);
 
 $('back-btn').onclick = () => {
   state.view = 'sessions';

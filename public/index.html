@@ -39,6 +39,10 @@
           <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 1.8h5.2L12 4.6v9.6H4z"/><path d="M9.2 1.8v2.8H12"/><path d="M6 8h4M6 10.5h4"/></svg>
           <span>docs</span>
         </button>
+        <button id="nav-guide" class="nav-item" title="Guide — how every feature works">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13.1V3.6A1.6 1.6 0 0 1 4.6 2H13v9.4H4.6A1.6 1.6 0 0 0 3 13.1a1.6 1.6 0 0 0 1.6 1.6H13"/></svg>
+          <span>guide</span>
+        </button>
       </nav>
     </aside>
     <main id="main">
@@ -174,6 +178,202 @@
         </div>
         <div id="graph-legend" class="map-legend"></div>
         <div id="graph-summary" class="map-summary mono"></div>
+      </div>
+      <div id="guide-report" class="report" hidden>
+        <header class="report-head">
+          <h1>Guide</h1>
+          <span class="mono report-sub">how every feature works — click a section to expand it</span>
+        </header>
+        <p class="guide-intro">
+          Tokenscope watches your local Claude Code transcripts (<code>~\.claude\projects</code>) and shows
+          what is in each session's context window, what every action cost in tokens, and where the money goes.
+          Sessions active in the last 48 hours load automatically and new activity streams in live.
+          Everything runs on your machine — the collector serves <b>localhost only</b> (port 4820) and nothing leaves it.
+          The bundled statusline forwarder adds the exact window size, session cost, and rate-limit usage;
+          OTLP logs (if enabled) add exact per-request cost.
+        </p>
+        <div class="stag">
+
+        <div class="sect closed">
+          <h2 data-sect="g-sessions">Sessions</h2>
+          <div class="guide-body">
+            <p>The landing page lists every session in the loaded window, newest first. Each card shows:</p>
+            <ul>
+              <li><b>green pulsing dot</b> — activity in the last 2 minutes (live)</li>
+              <li><b>context bar</b> — current context vs the model's window; turns orange past 75% full, red past 90%</li>
+              <li><b>meta line</b> — model, session cost, subagent count, <code>⟲n</code> compaction count, time since last activity</li>
+            </ul>
+            <p>Click a card (or press Enter on it) to open the session. The <b>←</b> button in the session header, or the sessions item in the sidebar, returns here.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-gauge">Context window gauge</h2>
+          <div class="guide-body">
+            <p>The bar at the top of a session shows what occupies the context window <i>right now</i>, split by where the tokens came from: <b>base</b> (system prompt + tools + memory), <b>conversation</b>, <b>docs read</b>, <b>code read</b>, <b>search</b>, <b>agents</b>, <b>other tools</b>, <b>attachments</b>, <b>output</b>, and <b>recache</b>. Hover any segment for exact numbers; the legend below repeats them.</p>
+            <p>Buckets accumulate over the session's life. After a compaction shrinks the window they are scaled onto the real usage, so the bar always shows <i>composition</i>, not raw lifetime sums. The output segment's tooltip splits thinking / visible text / tool calls where measurable.</p>
+            <p>The header meta row shows the project path, model, cost so far, and 5-hour / 7-day rate-limit usage when the statusline forwarder reports it. Hook events flash briefly next to the title as they fire.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-scrub">Time scrubber</h2>
+          <div class="guide-body">
+            <p>The stacked-area strip under the gauge is the context window over time. <b>Click or drag</b> anywhere on it to time-travel: the gauge above shows the composition at that moment, a chip names the action the cursor points at, and the matching timeline row gets a dashed outline. Releasing scrolls the timeline to that row.</p>
+            <ul>
+              <li><b>dashed vertical ticks</b> — compactions</li>
+              <li><b>⏵ live</b> — return to now</li>
+              <li>clickable <b>timestamps</b> in the timeline jump the scrubber to that exact call</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-timeline">Per-action timeline</h2>
+          <div class="guide-body">
+            <p>One block per prompt (turn), newest expanded by default — click a header to collapse or expand it. Each action row shows the timestamp (click to scrub), the tool call, a bar scaled to its context cost, and the tokens it added to the window.</p>
+            <p><b>Amber token counts</b> mark calls that belong to an Optimize finding — click the row to focus that finding. Turns marked <code>⟲</code> are compaction summaries: the model's own record of the history that was dropped.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-base">Base context</h2>
+          <div class="guide-body">
+            <p>What is loaded before you type anything, in two groups:</p>
+            <ul>
+              <li><b>loaded at session start</b> — disk-scanned files (project and user <code>CLAUDE.md</code>, their <code>@</code>-imports, <code>MEMORY.md</code>, <code>.claude\rules</code>) with estimated token cost, plus a <b>system prompt + tools</b> remainder (the base total minus those files — transcripts don't itemize it; run <code>/context</code> in the terminal for the interactive breakdown)</li>
+              <li><b>injected during session</b> — harness attachments: skill listing, agent listing, edited files re-injected after edits, todo reminders, hook output, and so on — measured where possible, size-estimated otherwise</li>
+            </ul>
+            <p>Expand any <code>▸</code> row for the file path, size, modified time, how many sessions load it (and the total that costs), and how often this session actually read or edited it. In-context use isn't logged by the model — loads, Reads, and edits are the observable signals.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-optimize">Optimize</h2>
+          <div class="guide-body">
+            <p>Heuristics over the measured session; every finding carries its evidence and a concrete fix:</p>
+            <ul>
+              <li><b>repeated searches</b> — the same query run again and again → document the concept in a doc</li>
+              <li><b>re-read files</b> — one file read many times → a short API doc, or split the file</li>
+              <li><b>fat docs</b> — expensive per read → split into focused docs</li>
+              <li><b>always-loaded base files</b> — paid every session start → trim, or move on-demand</li>
+              <li><b>harness injections</b> — heavy hook output, full-file re-injections, reminder buildup</li>
+              <li><b>skill candidates</b> — workflows Claude re-runs by hand → package as a skill</li>
+              <li><b>unused skill listings</b> — listing entries paid every session for skills never used</li>
+              <li><b>agent ROI</b> — agents returning huge results into the parent window</li>
+              <li><b>compactions</b> and <b>idle re-caching</b> — session-hygiene costs</li>
+            </ul>
+            <p>Findings are capped per kind — <b>show n more</b> reveals the rest. <b>Clicking a finding</b> highlights its calls in the timeline (and agent lists) and scrolls to them; click again to clear. Timeline rows with amber counts link back the other way.</p>
+            <p><b>generate plan</b> feeds all findings plus the measured facts to your local <code>claude</code> CLI (headless, billed to your account) and saves a prioritized action plan to the project's <code>.claude\context\optimize-plan-….md</code>.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-ctxfile">Context file</h2>
+          <div class="guide-body">
+            <p>The <b>context file</b> button in the session header digests the whole session — prompts in order, heaviest actions, files edited and read, docs, subagents, compaction summaries — through your local <code>claude</code> CLI into a handoff document, saved under the project's <code>.claude\context\session-….md</code>. Useful for continuing work in a fresh session without re-paying the exploration.</p>
+            <p>One generation per session at a time, 5-minute timeout; <b>cancel</b> kills the running CLI. Billed to your own account.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-compaction">Compaction</h2>
+          <div class="guide-body">
+            <p>Each compaction event shows when it ran, what triggered it, and the window before → after. Expand a row for the cost: the summary plus the rebuilt context, re-paid as fresh input. Dropped history is gone for the model — earlier decisions survive only in the <code>⟲</code> summary turn.</p>
+            <p>Under the gauge you also get the compaction history and a growth forecast; the scrubber marks each event with a dashed tick.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-cache">Cache economics</h2>
+          <div class="guide-body">
+            <p>Measured input-side token flows, priced at list rates when the model's price is known:</p>
+            <ul>
+              <li><b>cache hit ratio</b> — share of input served from the prompt cache instead of re-sent at full price</li>
+              <li><b>saved by caching</b> — cached reads bill at 0.1× the input price</li>
+              <li><b>write premium</b> — making content cacheable bills above input: 1.25× at 5-minute TTL, 2× at 1-hour</li>
+              <li><b>idle-gap re-writes</b> — content re-cached after the cache expired during a pause: tokens the session had already paid for once; grouping interactions or one session per task avoids it</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-mcp">MCP &amp; skills (session panel)</h2>
+          <div class="guide-body">
+            <p>Per MCP server: calls, result tokens, tools used, where it's configured, and when it last ran — including calls made by subagents. Servers that were <b>never called</b> still load their tool schemas into base context every session (transcripts don't itemize the size). <b>Deferred tool loads</b> is the measured cost of ToolSearch fetching schemas on demand.</p>
+            <p>Per skill: invocations, result tokens, and its share of the skill listing paid at every session start. Unused skills are aggregated with their total standing cost. Only invocations are observable — a skill can still steer behavior from its description alone.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-docs">Docs leaderboard</h2>
+          <div class="guide-body">
+            <p>Every <code>.md</code> this session read, ranked by tokens; the <b>A</b> badge means a subagent read it. Expand a doc for every individual use — time, the prompt or agent it served, tokens — and <b>click a use to jump</b> to that call in the timeline.</p>
+            <p>Below the list: base-loaded docs with <b>no observed use</b> this session — loaded and paid, never read or edited.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-agents">Agents</h2>
+          <div class="guide-body">
+            <p>Each subagent runs in its <b>own context window</b> — only its final result returns to the parent. The summary line totals it: tokens burned in agent windows → tokens returned, with the compression ratio (burned per returned token). Delegation earns its keep when that ratio is high.</p>
+            <p>Expand an agent for its model, window size, input/output, duration, docs reads, and the full action list — each call with duration, the ~output tokens spent issuing it, and what it added to the agent's window. Amber-flagged calls link to Optimize findings here too.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-totals">Session totals</h2>
+          <div class="guide-body">
+            <p>API calls, fresh input tokens, output tokens — with the output split into ~thinking, ~visible text, and ~tool calls where measurable — plus subagent calls and the tokens they burned in their own windows.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-map">Codebase map</h2>
+          <div class="guide-body">
+            <p>Every file read across the loaded window, one project at a time (switch with the chips). <b>Bubble area = tokens spent reading the file</b>, color = top-level directory. Only the largest ~90 files get their own bubble; the rest merge into one <i>(n more files)</i> bubble per directory.</p>
+            <ul>
+              <li><b>click</b> a bubble — details: tokens, share of project, reads, ~per read, sessions, whether agents read it</li>
+              <li><b>drag</b> to rearrange — dropping pins the bubble in place, <b>double-click</b> unpins</li>
+              <li>files read 3+ times get a hint: a focused doc could make re-checks cheaper</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-graph">Knowledge graph</h2>
+          <div class="guide-body">
+            <p><b>build graph</b> parses the selected project (at <b>folder</b> or <b>file</b> granularity) into modules and import edges, links your docs to the code they cover, and saves the result to <code>.claude\context\graph.json</code>. The status shows when it was built, at which commit, and how many commits behind it has fallen.</p>
+            <ul>
+              <li><b>circles</b> — modules, area = number of source files; <b>squares</b> — docs</li>
+              <li><b>solid arrows</b> — imports, flowing top → bottom</li>
+              <li><b>dotted</b> — a doc mentions that code area; <b>dashed</b> — the doc was observed in use together with it</li>
+            </ul>
+            <p>Drag nodes, drag the background to pan, scroll to zoom. Hovering isolates a node's neighborhood; clicking shows its dependency lists and linked docs. The <b>filter</b> shows matching paths plus their direct import neighbors. What fits on screen is picked by structural importance — filter to reach the rest. Very large graphs use a fast banded layout; filtering restores the fully layered one.</p>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-trends">Trends</h2>
+          <div class="guide-body">
+            <p>Rolled-up history that accrues from install onward and <b>outlives the 48-hour live window</b>:</p>
+            <ul>
+              <li><b>tokens per day</b> — input and output stacked; hover a column for sessions, tokens, cost, compactions</li>
+              <li><b>base context per session</b> — is the standing cost of every session start growing?</li>
+              <li><b>projects</b> and <b>models</b> — ranked by token volume with session counts and cost</li>
+              <li><b>cache economics</b> — lifetime hit ratio, saved vs write premium</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="sect closed">
+          <h2 data-sect="g-reports">Docs &amp; MCP across sessions</h2>
+          <div class="guide-body">
+            <p>The <b>docs</b> and <b>mcp</b> pages aggregate their session panels over every loaded session and agent: every doc read anywhere (with reads, tokens, session counts), every server call and skill use — and the standing costs: docs loaded every session but never read, servers configured but never called, skills paid in the listing but never used.</p>
+          </div>
+        </div>
+
+        </div>
       </div>
     </main>
   </div>
