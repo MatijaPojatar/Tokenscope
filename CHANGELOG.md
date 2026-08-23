@@ -3,6 +3,73 @@
 Notable changes to Tokenscope. Format follows [Keep a Changelog](https://keepachangelog.com);
 versions follow [SemVer](https://semver.org).
 
+## [0.7.0] — 2026-08-23
+
+### Added
+
+- **Knowledge graph.** A per-project graph built from static import
+  structure (folder or file granularity; string-level extraction, tsconfig
+  baseUrl/paths aware, zero dependencies), with docs linked to the code
+  they cover — static `mentions` edges plus behavioral `observed` edges
+  from real sessions — and measured usage overlaid on nodes. Saved to
+  `<project>\.claude\context\graph.json` with a git-staleness stamp; a
+  token-budgeted `codemap.md` orientation doc renders from the same
+  artifact. Endpoints: `GET`/`POST /api/graph`, `POST /api/graph/codemap`.
+- **Graph page.** A dedicated dashboard page rendering the graph with
+  Cytoscape: dependencies flow top → bottom, docs sit beside the code they
+  cover, hover isolates a neighborhood, a search box shows matches plus
+  their import neighbors, and modules sessions actually read get an amber
+  halo and size boost scaled by measured tokens. A build panel drives
+  builds with a live phase-by-phase progress bar
+  (`GET /api/graph/progress`); very large graphs fall back to a fast
+  banded layout.
+- **Graph query surface for Claude.** The `graph-nav` skill answers
+  structure questions from the built graph instead of grep fan-outs:
+  `impact` (transitive blast radius), `deps`, `path` (shortest import
+  chain), `hot` (usage-ranked modules), doc routing, and a codemap
+  `overview` — each a ~15-line, staleness-stamped answer via
+  `GET /api/graph/query` or the offline CLI
+  (`node src/graph.js <mode> <project> …`). Content search explicitly
+  stays grep's job.
+- **Homepage.** The new landing page: live-updating stat tiles (live
+  sessions, sessions/tokens/cost in the 48h window, today's spend from
+  rollups, 5h/7d rate-limit fill), cards linking into live sessions, and
+  quick links to every page. The sidebar brand returns to it from
+  anywhere.
+- **Sessions page.** Sessions moved out of the sidebar onto their own
+  page: a card grid with live dot, context-fill bar (warns amber past
+  75%, red past 90%), model, cost, agent and compaction counts.
+- **Guide page.** A built-in reference documenting how every feature
+  works, one collapsible section per feature.
+
+### Changed
+
+- Sidebar reworked into an always-visible icon rail (expands on hover or
+  keyboard focus) with pages for home, sessions, map, graph, trends, mcp,
+  docs, and guide; the codebase map and knowledge graph split into
+  separate pages, both full-width.
+- Buttons redesigned app-wide: one recipe with a clear hierarchy —
+  secondary buttons brighter, primary actions (context file, generate
+  plan, build graph, live) always lit in accent and filling solid on
+  hover; active chips and nav items marked in solid accent.
+- Motion pass: pages fade up on navigation, staggered entrances gated to
+  view opens (never replayed by live SSE re-renders), the context gauge
+  glides between compositions via persistent segments, live dots pulse,
+  collapsible sections and timeline turns ease open/closed (grid-rows
+  technique; turns now toggle in place, preserving scroll), map bubbles
+  pop in, trend columns grow from the baseline. A `prefers-reduced-motion`
+  block collapses it all.
+
+### Fixed
+
+- A completed session-detail prefetch no longer paints the session
+  overview over whichever page is open (first-load homepage bug).
+- The `hidden` attribute now always wins over class-level `display`
+  rules — previously a flex/grid class could keep "hidden" elements
+  visible (stuck build-progress bar, section collapse).
+- Collapsed timeline turns with long prompts no longer widen the grid
+  track and overflow into the right column.
+
 ## [0.6.0] — 2026-08-18
 
 ### Added
@@ -215,6 +282,7 @@ Initial release.
 - Claude Code plugin packaging: marketplace manifest, SessionStart
   auto-boot hook, real-time event hooks, `/tokenscope:dashboard` skill.
 
+[0.7.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.7.0
 [0.6.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.6.0
 [0.5.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.5.0
 [0.4.0]: https://github.com/MatijaPojatar/Tokenscope/releases/tag/v0.4.0
