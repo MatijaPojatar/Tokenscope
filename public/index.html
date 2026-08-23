@@ -404,6 +404,7 @@
               <li><b>dotted</b> — a doc mentions that code area; <b>dashed</b> — the doc was observed in use together with it</li>
             </ul>
             <p>Drag nodes, drag the background to pan, scroll to zoom. Hovering isolates a node's neighborhood; clicking shows its dependency lists and linked docs. The <b>filter</b> shows matching paths plus their direct import neighbors. What fits on screen is picked by structural importance — filter to reach the rest. Very large graphs use a fast banded layout; filtering restores the fully layered one.</p>
+            <p><b>Claude can query it too</b>: the plugin's <code>graph-nav</code> skill answers structure questions (impact, dependencies, shortest chain, doc routing, hot modules) from the built graph via <code>GET /api/graph/query</code> — ~15 lines of context instead of grep fan-outs and file reads. Tell Claude "use the graph" or let the skill trigger on its own.</p>
           </div>
         </div>
 

@@ -16,7 +16,7 @@ import { SessionWatcher, defaultRoot } from './watcher.js';
 import { extractApiRequests } from './otel.js';
 import { scanBaseContext, scanMcpConfig } from './basescan.js';
 import { RollupStore, defaultDataDir } from './rollup.js';
-import { buildGraph, overlayUsage, linkDocs, gitBehind } from './graph.js';
+import { buildGraph, overlayUsage, linkDocs, gitBehind, answer } from './graph.js';
 import { renderCodemap } from './codemap.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -326,6 +326,40 @@ const server = http.createServer(async (req, res) => {
       graphInFlight.delete(key);
       graphProgress.delete(key);
     }
+    return;
+  }
+
+  // Text answers from the saved graph — the surface the graph-nav skill
+  // curls. Plain text on purpose: the output lands directly in a Claude
+  // session's context, so no JSON envelope to strip.
+  //   GET /api/graph/query?cwd=<project>&mode=query|impact|deps|path|hot|overview&q=<needle>[&b=<needle>]
+  if (url.pathname === '/api/graph/query' && req.method === 'GET') {
+    const cwd = url.searchParams.get('cwd') || '';
+    const mode = url.searchParams.get('mode') || 'query';
+    const q = url.searchParams.get('q') || '';
+    const b = url.searchParams.get('b') || undefined;
+    let graph;
+    try {
+      graph = JSON.parse(await fsp.readFile(graphFile(cwd), 'utf8'));
+    } catch {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(`no graph built for ${cwd || '(missing cwd)'} — build one: ` +
+        'POST /api/graph {"cwd":"<project>","granularity":"folder|file"} ' +
+        '(or the dashboard\'s graph page)\n');
+      return;
+    }
+    const lines = [];
+    const behind = gitBehind(cwd, graph.meta.gitHead);
+    lines.push(`graph: ${graph.meta.granularity} granularity · built ${String(graph.meta.builtAt || '').slice(0, 10)}` +
+      (behind == null ? ' · age unknown' : behind === 0 ? ' · up to date'
+        : ` · ⚠ ${behind} commit${behind === 1 ? '' : 's'} behind HEAD (rebuild for current answers)`));
+    if (mode === 'overview') {
+      lines.push('', renderCodemap(graph, { tokenBudget: 1200 }).text);
+    } else {
+      lines.push(...answer(graph, mode, q, b));
+    }
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(lines.join('\n') + '\n');
     return;
   }
 

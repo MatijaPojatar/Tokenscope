@@ -13,6 +13,8 @@
 //
 //   node src/graph.js <path> [--granularity folder|file] [--max-nodes 40]
 //                            [--out <file>] [--json]
+//   node src/graph.js query|impact|deps|path|hot|overview <project> [args]
+//     — answer from the saved graph.json (see the CLI block at the bottom)
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -601,6 +603,243 @@ export function queryGraph(graph, needle, { limit = 5 } = {}) {
   });
 }
 
+// ------------------------------------------------- query surface (skill/API)
+//
+// Everything below is pure (graph in, lines out) and deliberately token-lean:
+// these answers land in a Claude session's context, so caps and "+n more"
+// tails are part of the contract, never an implementation detail.
+
+// Resolve a path-ish needle ("src/store", "store.js", "src") to code nodes:
+// exact id first, then suffix, then substring. Multiple hits are returned as
+// candidates (most specific — shortest id — first) so callers can say what
+// they answered for instead of guessing silently.
+export function resolveNode(graph, needle) {
+  const q = String(needle).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const code = graph.nodes.filter((n) => n.kind === 'folder' || n.kind === 'file');
+  const bySpecificity = (list) => [...list].sort((a, b) =>
+    a.id.length - b.id.length || a.id.localeCompare(b.id));
+  const exact = code.filter((n) => n.id.toLowerCase() === q);
+  if (exact.length > 0) return { node: exact[0], candidates: exact };
+  const suffix = bySpecificity(code.filter((n) => n.id.toLowerCase().endsWith(q)));
+  if (suffix.length > 0) return { node: suffix[0], candidates: suffix };
+  const sub = bySpecificity(code.filter((n) => n.id.toLowerCase().includes(q)));
+  return { node: sub[0] || null, candidates: sub };
+}
+
+// Adjacency over internal import edges (pkg: and doc edges excluded).
+function importAdj(graph) {
+  const out = new Map();
+  const inn = new Map();
+  for (const e of graph.edges || []) {
+    if (e.kind !== 'imports' || String(e.to).startsWith('pkg:')) continue;
+    if (!out.has(e.from)) out.set(e.from, []);
+    out.get(e.from).push(e);
+    if (!inn.has(e.to)) inn.set(e.to, []);
+    inn.get(e.to).push(e);
+  }
+  return { out, inn };
+}
+
+// BFS reach over import edges: dir 'in' = transitive importers (blast
+// radius), dir 'out' = transitive dependencies. Returns one sorted id array
+// per depth level.
+export function reachFrom(graph, id, dir, { maxDepth = 6 } = {}) {
+  const { out, inn } = importAdj(graph);
+  const next = dir === 'out'
+    ? (n) => (out.get(n) || []).map((e) => e.to)
+    : (n) => (inn.get(n) || []).map((e) => e.from);
+  const seen = new Set([id]);
+  const levels = [];
+  let frontier = [id];
+  for (let d = 0; d < maxDepth && frontier.length > 0; d++) {
+    const nf = [];
+    for (const n of frontier) {
+      for (const t of next(n)) {
+        if (seen.has(t)) continue;
+        seen.add(t);
+        nf.push(t);
+      }
+    }
+    if (nf.length > 0) levels.push([...nf].sort());
+    frontier = nf;
+  }
+  return levels;
+}
+
+// Shortest import chain between two nodes: directed a→b first, then b→a,
+// then ignoring direction. kind says which reading applies to the chain.
+export function pathBetween(graph, aId, bId) {
+  const { out, inn } = importAdj(graph);
+  const bfs = (start, goal, step) => {
+    const prev = new Map([[start, null]]);
+    let frontier = [start];
+    while (frontier.length > 0) {
+      const nf = [];
+      for (const n of frontier) {
+        for (const t of step(n)) {
+          if (prev.has(t)) continue;
+          prev.set(t, n);
+          if (t === goal) {
+            const chain = [];
+            for (let c = t; c != null; c = prev.get(c)) chain.push(c);
+            return chain.reverse();
+          }
+          nf.push(t);
+        }
+      }
+      frontier = nf;
+    }
+    return null;
+  };
+  const fwd = (n) => (out.get(n) || []).map((e) => e.to);
+  const both = (n) => [
+    ...(out.get(n) || []).map((e) => e.to),
+    ...(inn.get(n) || []).map((e) => e.from),
+  ];
+  let chain = bfs(aId, bId, fwd);
+  if (chain) return { kind: 'forward', chain };
+  chain = bfs(bId, aId, fwd);
+  if (chain) return { kind: 'reverse', chain };
+  chain = bfs(aId, bId, both);
+  return chain ? { kind: 'mixed', chain } : null;
+}
+
+// Modules ranked by measured session usage (the overlay's tokensRead).
+export function hotNodes(graph, { limit = 12 } = {}) {
+  return graph.nodes
+    .filter((n) => (n.kind === 'folder' || n.kind === 'file') && (n.tokensRead || 0) > 0)
+    .sort((a, b) => b.tokensRead - a.tokensRead || (b.reads || 0) - (a.reads || 0))
+    .slice(0, limit);
+}
+
+// Doc edges pointing at a node — observed (behavioral) evidence first.
+export function docsFor(graph, id) {
+  return (graph.edges || [])
+    .filter((e) => (e.kind === 'mentions' || e.kind === 'observed') && e.to === id)
+    .sort((a, b) => (a.kind === 'observed' ? -1 : 1) - (b.kind === 'observed' ? -1 : 1) ||
+      b.weight - a.weight);
+}
+
+const fmtTokQ = (n) => (n >= 1000 ? Math.round(n / 1000) + 'k' : String(n));
+
+// One text answer for a query mode — shared by the CLI and the collector's
+// /api/graph/query endpoint. Returns lines; never throws on bad input.
+export function answer(graph, mode, qa, qb) {
+  const L = [];
+  const capList = (ids, cap = 15) =>
+    ids.slice(0, cap).join(', ') + (ids.length > cap ? `, +${ids.length - cap} more` : '');
+  const header = (n) => `${n.id}  [${n.kind}]` +
+    (n.files ? ` · ${n.files} files` : '') +
+    (n.tokensRead ? ` · ~${fmtTokQ(n.tokensRead)} tok read, ${n.reads} reads` : '');
+  const resolveOr = (needle) => {
+    const r = resolveNode(graph, needle);
+    if (!r.node) {
+      L.push(`no node matches "${needle}" (granularity: ${graph.meta.granularity})`);
+      return null;
+    }
+    if (r.candidates.length > 1) {
+      L.push(`"${needle}" matches ${r.candidates.length} nodes — answering for ${r.node.id} ` +
+        `(others: ${capList(r.candidates.slice(1).map((n) => n.id), 5)})`);
+    }
+    return r.node;
+  };
+  const docLines = (id) => {
+    for (const e of docsFor(graph, id).slice(0, 5)) {
+      L.push(`  doc: ${e.from} (${e.kind}${e.sessions ? `, ${e.sessions} sessions` : ''})`);
+    }
+  };
+
+  if (mode === 'impact') {
+    const n = resolveOr(qa);
+    if (!n) return L;
+    L.push(header(n));
+    const levels = reachFrom(graph, n.id, 'in');
+    if (levels.length === 0) {
+      L.push('  imported by: nothing internal — changing it breaks no other module\'s imports');
+    } else {
+      L.push(`  imported by (direct): ${capList(levels[0])}`);
+      const rest = levels.slice(1).flat();
+      if (rest.length > 0) L.push(`  then transitively: ${capList(rest)}`);
+      L.push(`  blast radius: ${levels[0].length + rest.length} module(s)`);
+    }
+    docLines(n.id);
+    return L;
+  }
+
+  if (mode === 'deps') {
+    const n = resolveOr(qa);
+    if (!n) return L;
+    L.push(header(n));
+    const levels = reachFrom(graph, n.id, 'out');
+    if (levels.length === 0) {
+      L.push('  imports: nothing internal');
+    } else {
+      L.push(`  imports (direct): ${capList(levels[0])}`);
+      const rest = levels.slice(1).flat();
+      if (rest.length > 0) L.push(`  then transitively: ${capList(rest)}`);
+    }
+    const pkgs = (graph.edges || [])
+      .filter((e) => e.from === n.id && String(e.to).startsWith('pkg:'))
+      .sort((a, b) => b.weight - a.weight);
+    if (pkgs.length > 0) L.push(`  packages: ${capList(pkgs.map((e) => e.to.slice(4)), 10)}`);
+    docLines(n.id);
+    return L;
+  }
+
+  if (mode === 'path') {
+    const a = resolveOr(qa);
+    const b = qb != null ? resolveOr(qb) : null;
+    if (!a || !b) {
+      if (qb == null) L.push('path needs two endpoints');
+      return L;
+    }
+    if (a.id === b.id) {
+      L.push(`${a.id} — both needles resolve to the same node`);
+      return L;
+    }
+    const p = pathBetween(graph, a.id, b.id);
+    if (!p) L.push(`no import chain connects ${a.id} and ${b.id}`);
+    else if (p.kind === 'forward') L.push(`${p.chain.join(' → ')}   (each → = "imports from")`);
+    else if (p.kind === 'reverse') L.push(`${p.chain.join(' → ')}   (${b.id} imports down to ${a.id})`);
+    else L.push(`${p.chain.join(' — ')}   (connected ignoring import direction)`);
+    return L;
+  }
+
+  if (mode === 'hot') {
+    const list = hotNodes(graph);
+    if (list.length === 0) {
+      L.push('no usage data on this graph — rebuild it while the collector has sessions loaded');
+    }
+    for (const n of list) {
+      L.push(`${n.id} — ~${fmtTokQ(n.tokensRead)} tok read · ${n.reads} reads` +
+        (n.files ? ` · ${n.files} files` : ''));
+    }
+    return L;
+  }
+
+  // default: 'query' — everything the graph knows about matching nodes
+  const results = queryGraph(graph, qa, { limit: 5 });
+  if (results.length === 0) {
+    L.push(`no nodes match "${qa}" (granularity: ${graph.meta.granularity})`);
+  }
+  for (const r of results) {
+    L.push(header(r.node));
+    const line = (label, list, fmt) => {
+      if (list.length === 0) return;
+      L.push(`  ${label} ` + list.slice(0, 12).map(fmt).join(', ') +
+        (list.length > 12 ? `, +${list.length - 12} more` : ''));
+    };
+    line('imports →', r.imports, (x) => `${x.id} (${x.weight})`);
+    line('imported by ←', r.importedBy, (x) => `${x.id} (${x.weight})`);
+    line('packages:', r.packages, (x) => x.id);
+    const docs = [...r.docs].sort((x, y) =>
+      (x.kind === 'observed' ? -1 : 1) - (y.kind === 'observed' ? -1 : 1));
+    line('docs:', docs, (x) =>
+      `${x.id} (${x.kind}${x.sessions ? `, ${x.sessions} sess` : ''})`);
+  }
+  return L;
+}
+
 // Commits on HEAD since the graph was built — the staleness signal. null
 // means "age unknown" (no git, unknown sha): shown as such, never silence.
 export function gitBehind(cwd, head) {
@@ -628,13 +867,23 @@ if (isMain) {
     return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
   };
 
-  // query mode: answer from an already-built artifact.
-  //   node src/graph.js query <project> <path-or-name> [--limit 5]
-  if (args[0] === 'query') {
+  // query modes: answer from an already-built artifact.
+  //   node src/graph.js query    <project> <path-or-name>   everything known about matches
+  //   node src/graph.js impact   <project> <path>           who imports it, transitively
+  //   node src/graph.js deps     <project> <path>           what it imports, transitively
+  //   node src/graph.js path     <project> <a> <b>          shortest import chain
+  //   node src/graph.js hot      <project>                  modules by measured tokens read
+  //   node src/graph.js overview <project>                  codemap-style orientation
+  const MODES = ['query', 'impact', 'deps', 'path', 'hot', 'overview'];
+  if (MODES.includes(args[0])) {
+    const mode = args[0];
     const project = args[1];
-    const needle = args[2];
-    if (!project || !needle) {
-      console.error('usage: node src/graph.js query <project> <path-or-name> [--limit 5]');
+    const qa = args[2];
+    const qb = args[3];
+    const needsA = mode !== 'hot' && mode !== 'overview';
+    if (!project || (needsA && !qa) || (mode === 'path' && !qb)) {
+      console.error(`usage: node src/graph.js ${mode} <project>` +
+        (needsA ? ' <path-or-name>' : '') + (mode === 'path' ? ' <b>' : ''));
       process.exit(2);
     }
     const file = path.join(project, '.claude', 'context', 'graph.json');
@@ -645,25 +894,15 @@ if (isMain) {
       console.error(`no graph at ${file} — build one first (dashboard "build graph" or POST /api/graph)`);
       process.exit(1);
     }
-    const results = queryGraph(graph, needle, { limit: Number(argOf('--limit', 5)) });
-    if (results.length === 0) {
-      console.log(`no nodes match "${needle}" (granularity: ${graph.meta.granularity})`);
+    const behind = gitBehind(project, graph.meta.gitHead);
+    if (behind > 0) {
+      console.log(`⚠ graph is ${behind} commit${behind === 1 ? '' : 's'} behind HEAD — rebuild for current answers`);
     }
-    for (const r of results) {
-      const n = r.node;
-      console.log(`${n.id}  [${n.kind}]` +
-        (n.files ? `  ${n.files} files` : '') +
-        (n.tokensRead ? `  ~${n.tokensRead} tok read` : ''));
-      const line = (label, list, fmt) => {
-        if (list.length === 0) return;
-        console.log(`  ${label} ` + list.slice(0, 12).map(fmt).join(', ') +
-          (list.length > 12 ? `, +${list.length - 12} more` : ''));
-      };
-      line('imports ->', r.imports, (x) => `${x.id} (${x.weight})`);
-      line('imported by <-', r.importedBy, (x) => `${x.id} (${x.weight})`);
-      line('packages:', r.packages, (x) => x.id);
-      line('docs:', r.docs, (x) =>
-        `${x.id} (${x.kind}${x.sessions ? `, ${x.sessions} sess` : ''})`);
+    if (mode === 'overview') {
+      const { renderCodemap } = await import('./codemap.js');
+      console.log(renderCodemap(graph, { tokenBudget: 1200 }).text);
+    } else {
+      for (const l of answer(graph, mode, qa, qb)) console.log(l);
     }
     process.exit(0);
   }
