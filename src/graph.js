@@ -228,8 +228,9 @@ export function makeResolver(files, tsconfigs = []) {
 
 // -------------------------------------------------------------- file graph
 
-export async function buildFileGraph(cwd, { maxFiles = MAX_FILES } = {}) {
+export async function buildFileGraph(cwd, { maxFiles = MAX_FILES, onProgress = null } = {}) {
   const root = path.resolve(cwd);
+  onProgress?.({ phase: 'walk', done: 0, total: 0 });
   const { files, tsconfigs, capped } = await walkProject(root, { maxFiles });
   const configs = [];
   for (const t of tsconfigs) {
@@ -242,7 +243,9 @@ export async function buildFileGraph(cwd, { maxFiles = MAX_FILES } = {}) {
   const externals = new Map();  // 'fromFile|pkg' -> weight
   const unresolved = new Map(); // spec -> count
   const BATCH = 64;
+  onProgress?.({ phase: 'parse', done: 0, total: files.length });
   for (let i = 0; i < files.length; i += BATCH) {
+    onProgress?.({ phase: 'parse', done: i, total: files.length });
     await Promise.all(files.slice(i, i + BATCH).map(async (file) => {
       let text;
       try {
@@ -313,9 +316,10 @@ export function collapseFolders(folderFiles, maxNodes) {
 // ------------------------------------------------------------- build graph
 
 export async function buildGraph(cwd, {
-  granularity = 'folder', maxNodes = 40, maxFiles = MAX_FILES,
+  granularity = 'folder', maxNodes = 40, maxFiles = MAX_FILES, onProgress = null,
 } = {}) {
-  const fg = await buildFileGraph(cwd, { maxFiles });
+  const fg = await buildFileGraph(cwd, { maxFiles, onProgress });
+  onProgress?.({ phase: 'aggregate', done: fg.files.length, total: fg.files.length });
   const root = fg.cwd;
 
   // nodeOf maps an absolute file to its node id in the chosen granularity;

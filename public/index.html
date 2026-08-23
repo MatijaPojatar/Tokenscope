@@ -203,14 +203,27 @@
           <span class="mono report-sub">import structure between modules — dependencies flow top → bottom, docs sit beside the code they cover</span>
         </header>
         <div id="graph-projects" class="map-projects stag"></div>
+        <div class="graph-build-panel">
+          <div class="gb-head">build</div>
+          <div class="gb-row">
+            <button id="graph-build" class="primary" title="Parse the project's imports and docs into .claude\context\graph.json">build graph</button>
+            <select id="graph-gran" title="graph granularity">
+              <option value="folder">folder</option>
+              <option value="file">file</option>
+            </select>
+            <span id="graph-status"></span>
+          </div>
+          <div id="graph-progress" class="gb-progress" hidden>
+            <div class="gb-bar"><div id="gb-fill"></div></div>
+            <span id="gb-label" class="mono"></span>
+          </div>
+        </div>
         <div class="graph-toolbar">
-          <button id="graph-build" class="primary">build graph</button>
-          <select id="graph-gran" title="graph granularity">
-            <option value="folder">folder</option>
-            <option value="file">file</option>
-          </select>
-          <input id="graph-filter" type="text" placeholder="filter path — matches + neighbors" spellcheck="false">
-          <span id="graph-status"></span>
+          <div class="graph-search" title="Shows matching nodes plus their direct import neighbors">
+            <svg class="gs-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="4.6"/><path d="m10.4 10.4 3.4 3.4"/></svg>
+            <input id="graph-filter" type="text" placeholder="search modules &amp; files…" spellcheck="false" aria-label="search the graph">
+            <button id="graph-filter-clear" class="gs-clear" hidden title="Clear search">×</button>
+          </div>
         </div>
         <div class="map-body">
           <div id="graph-canvas" class="map-canvas"></div>

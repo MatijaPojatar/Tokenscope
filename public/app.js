@@ -2354,11 +2354,41 @@ async function fetchGraph(cwd) {
   if (state.view === 'graph') renderGraphPage();
 }
 
+const BUILD_PHASES = {
+  walk: 'scanning files…',
+  parse: 'parsing imports',
+  aggregate: 'aggregating edges…',
+  link: 'linking docs & usage…',
+  save: 'saving graph.json…',
+};
+
+function renderBuildProgress(p) {
+  const wrap = $('graph-progress');
+  wrap.hidden = false;
+  const fill = $('gb-fill');
+  const determinate = p.total > 0;
+  wrap.querySelector('.gb-bar').classList.toggle('indet', !determinate);
+  fill.style.width = determinate ? Math.round((p.done / p.total) * 100) + '%' : '';
+  $('gb-label').textContent = (BUILD_PHASES[p.phase] || 'building…') +
+    (determinate ? ` — ${p.done} / ${p.total} files` : '');
+}
+
 async function buildGraphNow(cwd) {
   if (state.graphBuilding) return;
   state.graphBuilding = true;
   $('graph-build').disabled = true;
-  $('graph-status').textContent = 'building… (large repos take a few seconds)';
+  $('graph-status').textContent = '';
+  renderBuildProgress({ phase: 'walk', done: 0, total: 0 });
+  // the POST answers only when the build is done — poll the progress
+  // endpoint in between to drive the bar
+  const poll = setInterval(async () => {
+    try {
+      const res = await fetch('/api/graph/progress?cwd=' + encodeURIComponent(cwd));
+      if (!res.ok) return;
+      const p = await res.json();
+      if (p.building && state.graphBuilding) renderBuildProgress(p);
+    } catch { /* collector busy mid-build */ }
+  }, 300);
   try {
     const res = await fetch('/api/graph', {
       method: 'POST',
@@ -2371,6 +2401,8 @@ async function buildGraphNow(cwd) {
   } catch {
     $('graph-status').textContent = 'build failed — is the collector running?';
   }
+  clearInterval(poll);
+  $('graph-progress').hidden = true;
   state.graphBuilding = false;
   $('graph-build').disabled = false;
   if (state.view === 'graph') renderGraphPage();
@@ -2558,12 +2590,21 @@ $('back-btn').onclick = () => {
 $('graph-build').onclick = () => { if (state.mapProject) buildGraphNow(state.mapProject); };
 let graphFilterTimer = null;
 $('graph-filter').addEventListener('input', () => {
+  $('graph-filter-clear').hidden = $('graph-filter').value === '';
   clearTimeout(graphFilterTimer);
   graphFilterTimer = setTimeout(() => {
     state.graphFilter = $('graph-filter').value;
     if (state.view === 'graph') renderGraphPage();
   }, 250);
 });
+$('graph-filter-clear').onclick = () => {
+  clearTimeout(graphFilterTimer);
+  $('graph-filter').value = '';
+  $('graph-filter-clear').hidden = true;
+  state.graphFilter = '';
+  if (state.view === 'graph') renderGraphPage();
+  $('graph-filter').focus();
+};
 
 window.addEventListener('resize', () => {
   if (state.view === 'map') renderMap();

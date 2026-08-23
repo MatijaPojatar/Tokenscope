@@ -196,6 +196,7 @@ function graphPairs(cwd) {
 
 const graphFile = (cwd) => path.join(cwd, '.claude', 'context', 'graph.json');
 const graphInFlight = new Set(); // normalized cwds with a build running
+const graphProgress = new Map(); // normalized cwd -> {phase, done, total}
 
 async function serveStatic(res, urlPath) {
   const rel = urlPath === '/' ? 'index.html' : urlPath.slice(1);
@@ -301,13 +302,17 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     graphInFlight.add(key);
+    graphProgress.set(key, { phase: 'walk', done: 0, total: 0 });
     try {
       const graph = await buildGraph(cwd, {
         granularity: body.granularity === 'file' ? 'file' : 'folder',
         maxNodes: Number(body.maxNodes) > 0 ? Number(body.maxNodes) : 40,
+        onProgress: (p) => graphProgress.set(key, p),
       });
+      graphProgress.set(key, { phase: 'link', done: 0, total: 0 });
       overlayUsage(graph, store.fileReport());
       linkDocs(graph, await docsRoster(cwd), graphPairs(cwd));
+      graphProgress.set(key, { phase: 'save', done: 0, total: 0 });
       const file = graphFile(cwd);
       await fsp.mkdir(path.dirname(file), { recursive: true });
       await fsp.writeFile(file, JSON.stringify(graph, null, 1) + '\n');
@@ -319,7 +324,20 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ error: String((e && e.message) || e) }));
     } finally {
       graphInFlight.delete(key);
+      graphProgress.delete(key);
     }
+    return;
+  }
+
+  // Build progress for the dashboard's progress bar — polled while a build
+  // runs; {building:false} once it finishes (the POST response carries the
+  // result).
+  if (url.pathname === '/api/graph/progress' && req.method === 'GET') {
+    const raw = url.searchParams.get('cwd') || '';
+    const key = raw ? path.resolve(raw).toLowerCase() : '';
+    const p = graphProgress.get(key);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(p ? { building: true, ...p } : { building: false }));
     return;
   }
 

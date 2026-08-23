@@ -28,6 +28,9 @@
 }
 
 * { box-sizing: border-box; }
+/* author display rules (flex/grid on a class) must never override the
+   hidden attribute — every hidden element in this app means display:none */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -59,7 +62,7 @@ body {
 /* Secondary (default): bright text on a raised panel. Primary (.primary):
    always lit in accent, fills solid on hover — the page's "do this" action. */
 .ctx-btn, .back-btn, .sugg-more, .scrub-live,
-.map-projects button, .graph-toolbar button {
+.map-projects button, .graph-toolbar button, .gb-row button {
   font-family: var(--mono); font-size: 0.68rem; font-weight: 600;
   background: var(--panel-2); color: var(--ink);
   border: 1px solid var(--line-bright); border-radius: 7px;
@@ -67,18 +70,21 @@ body {
   transition: color 0.12s, border-color 0.12s, background 0.12s, transform 0.08s;
 }
 .ctx-btn:hover:not(:disabled), .back-btn:hover, .sugg-more:hover,
-.map-projects button:hover, .graph-toolbar button:hover:not(:disabled) {
+.map-projects button:hover, .graph-toolbar button:hover:not(:disabled),
+.gb-row button:hover:not(:disabled) {
   color: var(--accent); border-color: var(--accent); background: var(--accent-dim);
 }
 .ctx-btn:active:not(:disabled), .back-btn:active, .sugg-more:active,
-.scrub-live:active, .map-projects button:active, .graph-toolbar button:active:not(:disabled) {
+.scrub-live:active, .map-projects button:active, .graph-toolbar button:active:not(:disabled),
+.gb-row button:active:not(:disabled) {
   transform: translateY(1px);
 }
 .ctx-btn:focus-visible, .back-btn:focus-visible, .sugg-more:focus-visible,
-.scrub-live:focus-visible, .map-projects button:focus-visible, .graph-toolbar button:focus-visible {
+.scrub-live:focus-visible, .map-projects button:focus-visible, .graph-toolbar button:focus-visible,
+.gb-row button:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
-.ctx-btn:disabled, .graph-toolbar button:disabled { opacity: 0.55; cursor: wait; }
+.ctx-btn:disabled, .graph-toolbar button:disabled, .gb-row button:disabled { opacity: 0.55; cursor: wait; }
 button.primary {
   color: var(--accent);
   border-color: var(--accent);
@@ -383,7 +389,6 @@ h2 {
   transition: grid-template-rows 0.24s ease;
 }
 .sect.closed { grid-template-rows: auto 0fr; }
-.sect[hidden] { display: none; } /* author grid would beat the UA hidden rule */
 .sect > h2 { cursor: pointer; user-select: none; transition: margin-bottom 0.24s ease, color 0.12s ease; }
 .sect > h2::before {
   content: '▾'; display: inline-block; margin-right: 0.35em;
@@ -731,19 +736,62 @@ h2 {
 }
 #graph-report .map-detail .md-path { margin: 0.4rem 0 0.1rem; }
 .graph-toolbar { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.7rem; }
-.graph-toolbar select {
+.graph-toolbar select, .gb-row select {
   font-family: var(--mono); font-size: 0.66rem;
   background: var(--panel-2); color: var(--muted);
   border: 1px solid var(--line); border-radius: 6px;
   padding: 0.18rem 0.35rem;
 }
-.graph-toolbar input[type="text"] {
-  font-family: var(--mono); font-size: 0.66rem;
-  background: var(--panel-2); color: var(--ink);
-  border: 1px solid var(--line); border-radius: 6px;
-  padding: 0.18rem 0.45rem; width: 13rem;
+
+/* ---- graph build panel ---- */
+.graph-build-panel {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.65rem 0.9rem 0.75rem; margin-bottom: 0.7rem;
+  max-width: 620px;
 }
-.graph-toolbar input[type="text"]:focus { outline: none; border-color: var(--accent); }
+.gb-head {
+  font-family: var(--mono); font-size: 0.62rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+.gb-row { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; }
+.gb-progress { display: flex; align-items: center; gap: 0.7rem; margin-top: 0.65rem; }
+.gb-bar { flex: 1; height: 8px; background: var(--c-free); border-radius: 4px; overflow: hidden; }
+.gb-bar div {
+  height: 100%; border-radius: 4px; background: var(--accent);
+  transition: width 0.3s ease;
+}
+/* phases without a countable total: a sliding sweep instead of a fill */
+@keyframes slide-x {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(350%); }
+}
+.gb-bar.indet div { width: 35%; animation: slide-x 1.1s ease-in-out infinite; transition: none; }
+#gb-label { font-size: 0.64rem; color: var(--muted); white-space: nowrap; }
+/* graph search — must read as a search box at a glance */
+.graph-search { position: relative; display: inline-flex; align-items: center; }
+.gs-icon { position: absolute; left: 0.6rem; color: var(--muted); pointer-events: none; }
+.graph-search:focus-within .gs-icon { color: var(--accent); }
+.graph-search input {
+  font-family: var(--mono); font-size: 0.7rem;
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line-bright); border-radius: 7px;
+  padding: 0.35rem 1.7rem 0.35rem 1.95rem; width: 21rem; max-width: 80vw;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.graph-search input::placeholder { color: var(--muted); }
+.graph-search input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+.gs-clear {
+  position: absolute; right: 0.25rem;
+  background: none; border: none; cursor: pointer;
+  color: var(--muted); font-size: 0.9rem; line-height: 1;
+  padding: 0.15rem 0.4rem; border-radius: 5px;
+}
+.gs-clear:hover { color: var(--accent); }
+.gs-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 #graph-status { font-family: var(--mono); font-size: 0.64rem; color: var(--muted); }
 #graph-status.stale { color: #e39a3b; }
 .map-legend .swatch.sw-imports { background: var(--muted); height: 2px; width: 14px; border-radius: 0; }
