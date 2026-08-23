@@ -19,7 +19,7 @@ const state = {
   detail: {},      // id -> full session model
   selected: null,
   pinned: false,   // user clicked a session; stop auto-following
-  view: 'sessions', // 'sessions' (list page) | 'session' (detail) | 'docs' | 'mcp' | 'trends' | 'map'
+  view: 'home', // 'home' | 'sessions' (list) | 'session' (detail) | 'docs' | 'mcp' | 'trends' | 'map' | 'graph' | 'guide'
   rateLimits: null,
   report: { read: [], unused: [] },
   reportFetched: 0,
@@ -224,7 +224,49 @@ function openSect(key) {
   if (h && h.parentElement.classList.contains('closed')) h.click();
 }
 
-// ---- sessions page ----
+// ---- session cards (sessions page + home) ----
+
+function sessionCard(s) {
+  const live = s.lastActivity && Date.now() - new Date(s.lastActivity).getTime() < 120000;
+  const card = el('div', 'session-card' + (s.id === state.selected ? ' active' : ''));
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+
+  const top = el('div', 'sc-top');
+  top.append(
+    el('span', 'dot' + (live ? ' on' : '')),
+    el('span', 'sc-title', s.title || s.id.slice(0, 8)),
+    el('span', 'sc-ago mono', fmtAgo(s.lastActivity)),
+  );
+  card.append(top);
+  if (s.cwd) card.append(el('div', 'sc-cwd mono', s.cwd));
+
+  const win = s.window || 200000;
+  const pct = win ? (s.contextNow || 0) / win : 0;
+  const bar = el('div', 'sc-bar');
+  const fill = el('div', pct > 0.9 ? 'crit' : pct > 0.75 ? 'warn' : null);
+  fill.style.width = Math.min(100, pct * 100) + '%';
+  bar.append(fill);
+  const barrow = el('div', 'sc-barrow');
+  barrow.append(bar, el('span', 'mono sc-ctx', `${fmtTok(s.contextNow)} / ${fmtTok(win)}`));
+  card.append(barrow);
+
+  const bits = [];
+  if (s.model) bits.push(String(s.model).replace(/^claude-/, ''));
+  if (s.costUsd != null) bits.push(fmtUsd(s.costUsd));
+  if (s.agentCount) bits.push(`${s.agentCount} agent${s.agentCount === 1 ? '' : 's'}`);
+  if (s.compactions) bits.push(`⟲${s.compactions}`);
+  const meta = el('div', 'sc-meta mono', bits.join(' · '));
+  meta.title = bits.join(' · ');
+  card.append(meta);
+
+  const open = () => { state.selected = s.id; state.pinned = true; state.view = 'session'; render(); };
+  card.onclick = open;
+  card.onkeydown = (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+  };
+  return card;
+}
 
 function renderSessionsPage() {
   const box = $('sessions-rows');
@@ -233,47 +275,51 @@ function renderSessionsPage() {
     box.append(el('div', 'empty', 'waiting for sessions…'));
     return;
   }
-  for (const s of state.sessions) {
-    const live = s.lastActivity && Date.now() - new Date(s.lastActivity).getTime() < 120000;
-    const card = el('div', 'session-card' + (s.id === state.selected ? ' active' : ''));
-    card.tabIndex = 0;
-    card.setAttribute('role', 'button');
+  for (const s of state.sessions) box.append(sessionCard(s));
+}
 
-    const top = el('div', 'sc-top');
-    top.append(
-      el('span', 'dot' + (live ? ' on' : '')),
-      el('span', 'sc-title', s.title || s.id.slice(0, 8)),
-      el('span', 'sc-ago mono', fmtAgo(s.lastActivity)),
-    );
-    card.append(top);
-    if (s.cwd) card.append(el('div', 'sc-cwd mono', s.cwd));
+// ---- home page ----
 
-    const win = s.window || 200000;
-    const pct = win ? (s.contextNow || 0) / win : 0;
-    const bar = el('div', 'sc-bar');
-    const fill = el('div', pct > 0.9 ? 'crit' : pct > 0.75 ? 'warn' : null);
-    fill.style.width = Math.min(100, pct * 100) + '%';
-    bar.append(fill);
-    const barrow = el('div', 'sc-barrow');
-    barrow.append(bar, el('span', 'mono sc-ctx', `${fmtTok(s.contextNow)} / ${fmtTok(win)}`));
-    card.append(barrow);
+function statTile(label, value, sub) {
+  const t = el('div', 'stat');
+  t.append(el('div', 'stat-v mono', value), el('div', 'stat-l', label));
+  if (sub) t.append(el('div', 'stat-s mono', sub));
+  return t;
+}
 
-    const bits = [];
-    if (s.model) bits.push(String(s.model).replace(/^claude-/, ''));
-    if (s.costUsd != null) bits.push(fmtUsd(s.costUsd));
-    if (s.agentCount) bits.push(`${s.agentCount} agent${s.agentCount === 1 ? '' : 's'}`);
-    if (s.compactions) bits.push(`⟲${s.compactions}`);
-    const meta = el('div', 'sc-meta mono', bits.join(' · '));
-    meta.title = bits.join(' · ');
-    card.append(meta);
-
-    const open = () => { state.selected = s.id; state.pinned = true; state.view = 'session'; render(); };
-    card.onclick = open;
-    card.onkeydown = (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
-    };
-    box.append(card);
+function renderHome() {
+  const stats = $('home-stats');
+  stats.replaceChildren();
+  const ss = state.sessions;
+  const live = ss.filter((s) => s.lastActivity && Date.now() - new Date(s.lastActivity).getTime() < 120000);
+  const tok = ss.reduce((n, s) => n + ((s.totals && (s.totals.fresh + s.totals.output)) || 0), 0);
+  const cost = ss.reduce((n, s) => n + (s.costUsd || 0), 0);
+  stats.append(
+    statTile('live now', String(live.length)),
+    statTile('sessions · 48h', String(ss.length)),
+    statTile('tokens · 48h', fmtTok(tok), 'in + out'),
+    statTile('cost · 48h', cost > 0 ? fmtUsd(cost) : '–'),
+  );
+  const days = state.trends && state.trends.days;
+  const today = days && days.length ? days[days.length - 1] : null;
+  if (today) {
+    stats.append(statTile('today', fmtTok(today.fresh + today.output),
+      today.costUsd > 0 ? fmtUsd(today.costUsd) : ''));
   }
+  const rl = state.rateLimits;
+  for (const [k, label] of [['five_hour', '5h limit'], ['seven_day', '7d limit']]) {
+    if (rl && rl[k] && rl[k].used_percentage != null) {
+      stats.append(statTile(label, Math.round(rl[k].used_percentage) + '%', 'used'));
+    }
+  }
+
+  // live sessions get direct links; otherwise the most recent one
+  const box = $('home-live');
+  box.replaceChildren();
+  $('home-live-head').textContent = live.length ? 'live now' : 'latest session';
+  const show = live.length ? live.slice(0, 4) : ss.slice(0, 1);
+  if (show.length === 0) box.append(el('div', 'md-hint', 'waiting for sessions…'));
+  for (const s of show) box.append(sessionCard(s));
 }
 
 // ---- detail ----
@@ -2353,6 +2399,7 @@ async function fetchTrends(force) {
     if (res.ok) {
       state.trends = await res.json();
       if (state.view === 'trends') renderTrends();
+      else if (state.view === 'home') renderHome();
     }
   } catch { /* collector restarting */ }
 }
@@ -2374,8 +2421,9 @@ async function fetchMcpReport(force) {
 // container with .enter, which lets the staggered child animations play.
 // Live SSE re-renders inside an already-open view never replay them.
 const ENTRY_HOSTS = {
-  sessions: 'sessions-page', session: 'detail', docs: 'report', mcp: 'mcp-report',
-  trends: 'trends-report', map: 'map-report', graph: 'graph-report', guide: 'guide-report',
+  home: 'home-report', sessions: 'sessions-page', session: 'detail', docs: 'report',
+  mcp: 'mcp-report', trends: 'trends-report', map: 'map-report', graph: 'graph-report',
+  guide: 'guide-report',
 };
 let entryKey = null;
 let entryTimer = null;
@@ -2404,6 +2452,7 @@ function render() {
     state.selected = state.sessions[0].id;
   }
   markEntry();
+  $('nav-home').classList.toggle('active', state.view === 'home');
   // a session detail belongs to the Sessions section — keep its nav item lit
   $('nav-sessions').classList.toggle('active', state.view === 'sessions' || state.view === 'session');
   $('nav-docs').classList.toggle('active', state.view === 'docs');
@@ -2412,6 +2461,7 @@ function render() {
   $('nav-map').classList.toggle('active', state.view === 'map');
   $('nav-graph').classList.toggle('active', state.view === 'graph');
   $('nav-guide').classList.toggle('active', state.view === 'guide');
+  $('home-report').hidden = state.view !== 'home';
   $('sessions-page').hidden = state.view !== 'sessions';
   $('report').hidden = state.view !== 'docs';
   $('mcp-report').hidden = state.view !== 'mcp';
@@ -2424,7 +2474,8 @@ function render() {
   if (state.view !== 'session') {
     $('empty').hidden = true;
     $('detail').hidden = true;
-    if (state.view === 'sessions') renderSessionsPage();
+    if (state.view === 'home') renderHome();
+    else if (state.view === 'sessions') renderSessionsPage();
     else if (state.view === 'docs') renderReport();
     else if (state.view === 'mcp') renderMcpReport();
     else if (state.view === 'trends') renderTrends();
@@ -2485,6 +2536,7 @@ function wireNav(id, view, fetcher) {
     $(id).blur();
   };
 }
+wireNav('nav-home', 'home', fetchTrends); // trends feed the "today" tile
 wireNav('nav-sessions', 'sessions', null);
 wireNav('nav-docs', 'docs', fetchReport);
 wireNav('nav-mcp', 'mcp', fetchMcpReport);
@@ -2492,6 +2544,11 @@ wireNav('nav-trends', 'trends', fetchTrends);
 wireNav('nav-map', 'map', fetchFileMap);
 wireNav('nav-graph', 'graph', fetchFileMap);
 wireNav('nav-guide', 'guide', null);
+
+// home quick-link tiles delegate to the sidebar items (same fetch logic)
+for (const b of document.querySelectorAll('.home-link')) {
+  b.onclick = () => $('nav-' + b.dataset.nav).click();
+}
 
 $('back-btn').onclick = () => {
   state.view = 'sessions';
@@ -2528,7 +2585,7 @@ es.onmessage = (msg) => {
     }
     if (state.view === 'docs') fetchReport(false);
     if (state.view === 'mcp') fetchMcpReport(false);
-    if (state.view === 'trends') fetchTrends(false);
+    if (state.view === 'trends' || state.view === 'home') fetchTrends(false);
     if (state.view === 'map' || state.view === 'graph') fetchFileMap(false);
     render();
   } else if (data.type === 'session') {
@@ -2548,10 +2605,15 @@ async function fetchDetail(id) {
     const res = await fetch('/api/session/' + id);
     if (res.ok) {
       state.detail[id] = await res.json();
-      if (id === state.selected) renderDetail();
+      // only paint if the detail view is actually open — this resolves on
+      // first load too, where the homepage must stay in front
+      if (id === state.selected && state.view === 'session') renderDetail();
     }
   } catch { /* collector restarting */ }
 }
 
-// refresh "ago" stamps + live dots while the sessions page is visible
-setInterval(() => { if (state.view === 'sessions') renderSessionsPage(); }, 30000);
+// refresh "ago" stamps + live dots while a card-bearing page is visible
+setInterval(() => {
+  if (state.view === 'sessions') renderSessionsPage();
+  else if (state.view === 'home') renderHome();
+}, 30000);

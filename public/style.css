@@ -152,7 +152,10 @@ button.primary:hover:not(:disabled) {
   display: flex; align-items: center; gap: 0.6rem;
   padding: 0.1rem 0 1.1rem 1.05rem;
   white-space: nowrap;
+  background: none; border: none; cursor: pointer; text-align: left;
 }
+.brand-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
+.brand-row.active .brand-mark { filter: drop-shadow(0 0 5px rgba(239, 175, 69, 0.7)); }
 .brand-mark { flex: 0 0 auto; display: block; }
 .brand {
   font-family: var(--mono);
@@ -191,6 +194,45 @@ button.primary:hover:not(:disabled) {
 #main { overflow-y: auto; height: 100vh; margin-left: 56px; }
 #detail { animation: fade-up 0.22s ease both; }
 .empty { color: var(--muted); font-family: var(--mono); padding: 3rem; }
+
+/* ---- home page ---- */
+.home-stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.8rem;
+}
+.stat {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.75rem 0.9rem;
+}
+.stat-v { font-size: 1.3rem; font-weight: 600; color: var(--ink); line-height: 1.2; }
+.stat-l {
+  font-family: var(--mono); font-size: 0.62rem; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 0.08em; margin-top: 0.2rem;
+}
+.stat-s { font-size: 0.62rem; color: var(--muted); margin-top: 0.1rem; }
+.home-h { margin: 1.5rem 0 0.7rem; }
+.home-links {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.8rem;
+}
+.home-link {
+  display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.7rem;
+  align-items: center; text-align: left;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.7rem 0.9rem; cursor: pointer; color: var(--ink);
+  transition: background 0.12s ease, border-color 0.12s ease,
+    transform 0.14s ease, box-shadow 0.14s ease;
+}
+.home-link:hover {
+  background: var(--panel-2); border-color: var(--line-bright);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.3);
+}
+.home-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.home-link svg { grid-row: span 2; color: var(--muted); }
+.home-link:hover svg { color: var(--accent); }
+.home-link b { font-family: var(--mono); font-size: 0.76rem; font-weight: 600; }
+.home-link span { grid-column: 2; font-size: 0.66rem; color: var(--muted); }
 
 /* ---- sessions page ---- */
 #sessions-page { max-width: none; } /* card grid fills the screen; auto-fill adds columns */

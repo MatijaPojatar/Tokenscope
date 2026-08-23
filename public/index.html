@@ -10,10 +10,10 @@
 <body>
   <div id="app">
     <aside id="sidebar">
-      <div class="brand-row">
+      <button id="nav-home" class="brand-row" title="Home — totals, limits, and live sessions">
         <svg class="brand-mark" width="20" height="20" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="9" width="2.4" height="4" fill="#4CBCAA"/><rect x="6.8" y="6" width="2.4" height="7" fill="#9C8CE8"/><rect x="10.6" y="3" width="2.4" height="10" fill="#EFAF45"/></svg>
         <div class="brand">tokenscope</div>
-      </div>
+      </button>
       <nav id="nav">
         <button id="nav-sessions" class="nav-item" title="All live and recent sessions">
           <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.7" y="2.7" width="12.6" height="10.6" rx="1.6"/><path d="M4.5 6.2 6.8 8 4.5 9.8"/><path d="M8.5 10.3h3"/></svg>
@@ -47,6 +47,46 @@
     </aside>
     <main id="main">
       <div id="empty" class="empty">waiting for sessions…</div>
+      <div id="home-report" class="report" hidden>
+        <header class="report-head">
+          <h1>Tokenscope</h1>
+          <span class="mono report-sub">live context &amp; token telemetry for Claude Code — everything here updates in real time</span>
+        </header>
+        <div id="home-stats" class="home-stats stag"></div>
+        <h2 id="home-live-head" class="home-h">live now</h2>
+        <div id="home-live" class="sessions-grid stag"></div>
+        <h2 class="home-h">explore</h2>
+        <div class="home-links stag">
+          <button class="home-link" data-nav="sessions">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.7" y="2.7" width="12.6" height="10.6" rx="1.6"/><path d="M4.5 6.2 6.8 8 4.5 9.8"/><path d="M8.5 10.3h3"/></svg>
+            <b>sessions</b><span>every session in the last 48 hours, live</span>
+          </button>
+          <button class="home-link" data-nav="map">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="5.6" cy="9.4" r="3.9"/><circle cx="11.6" cy="4.9" r="2.5"/><circle cx="12.4" cy="11.6" r="1.6"/></svg>
+            <b>map</b><span>bubble per file — tokens spent reading it</span>
+          </button>
+          <button class="home-link" data-nav="graph">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="3.2" r="1.7"/><circle cx="3.2" cy="12" r="1.7"/><circle cx="12.8" cy="12" r="1.7"/><path d="M7.2 4.8 4 10.5M8.8 4.8 12 10.5M5.4 12h5.2"/></svg>
+            <b>graph</b><span>module imports &amp; the docs that cover them</span>
+          </button>
+          <button class="home-link" data-nav="trends">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M3.2 13.2V9.6"/><path d="M8 13.2V5.8"/><path d="M12.8 13.2V2.8"/></svg>
+            <b>trends</b><span>usage history across days, projects, models</span>
+          </button>
+          <button class="home-link" data-nav="mcp">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.6 2.2v3M10.4 2.2v3"/><path d="M4 5.2h8v2.3a4 4 0 0 1-8 0z"/><path d="M8 11.6v2.2"/></svg>
+            <b>mcp</b><span>server calls &amp; skill use across sessions</span>
+          </button>
+          <button class="home-link" data-nav="docs">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 1.8h5.2L12 4.6v9.6H4z"/><path d="M9.2 1.8v2.8H12"/><path d="M6 8h4M6 10.5h4"/></svg>
+            <b>docs</b><span>every .md read — and the ones never used</span>
+          </button>
+          <button class="home-link" data-nav="guide">
+            <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13.1V3.6A1.6 1.6 0 0 1 4.6 2H13v9.4H4.6A1.6 1.6 0 0 0 3 13.1a1.6 1.6 0 0 0 1.6 1.6H13"/></svg>
+            <b>guide</b><span>how every feature works</span>
+          </button>
+        </div>
+      </div>
       <div id="sessions-page" class="report" hidden>
         <header class="report-head">
           <h1>Sessions</h1>
