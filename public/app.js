@@ -1998,9 +1998,9 @@ function renderGraphFor(cwd) {
   if (m.behind > 0) status.classList.add('stale');
 
   // What fits on screen is picked by structural importance (import degree,
-  // then size) — usage sizes and colors nodes but must NOT gate visibility,
-  // or the view degrades into "files recent sessions touched". The path
-  // filter shows matching nodes plus their direct import neighbors.
+  // then size) — usage adds size and an amber halo but must NOT gate
+  // visibility, or the view degrades into "files recent sessions touched".
+  // The path filter shows matching nodes plus their direct import neighbors.
   const inner = (graph.edges || []).filter((e) => !String(e.to).startsWith('pkg:'));
   const docIds = new Set(graph.nodes.filter((n) => n.kind === 'doc').map((n) => n.id));
   const code = graph.nodes.filter((n) => n.kind === 'folder' || n.kind === 'file');
@@ -2074,14 +2074,19 @@ function renderGraphFor(cwd) {
   const top = canvas.getBoundingClientRect().top;
   canvas.style.height = Math.max(600, Math.round(window.innerHeight - top - 90)) + 'px';
   const maxW = Math.max(2, ...drawn.filter((e) => e.kind === 'imports').map((e) => e.weight));
+  // usage heat: each node's tokensRead as a share of the hottest drawn node —
+  // drives a size boost and an amber halo (structure alone still sets the base)
+  const maxTok = Math.max(1, ...[...keep.values()].map((n) => n.tokensRead || 0));
   const elems = [];
   for (const n of keep.values()) {
+    const heat = (n.tokensRead || 0) / maxTok;
     elems.push({ data: {
       id: n.id,
       label: n.id === '.' ? '(root)' : n.id.split('/').pop(),
-      size: Math.min(80, Math.max(22, 12 * Math.pow(n.files || 1, 0.25))),
+      size: Math.min(80, Math.max(22, 12 * Math.pow(n.files || 1, 0.25) + 30 * Math.sqrt(heat))),
       color: colorOf(n),
       kind: 'code',
+      heat,
       matched: matchedIds && matchedIds.has(n.id) ? 1 : 0,
     } });
   }
@@ -2174,6 +2179,12 @@ function renderGraphFor(cwd) {
           style: { width: 1.2, 'curve-style': 'bezier', 'line-style': 'dotted', 'line-color': accent, 'target-arrow-shape': 'none', opacity: 0.7 } },
         { selector: 'edge[kind = "observed"]',
           style: { width: 2.2, 'curve-style': 'bezier', 'line-style': 'dashed', 'line-color': accent, 'target-arrow-shape': 'none', opacity: 0.9 } },
+        { selector: 'node[heat > 0]',
+          style: {
+            'underlay-color': accent,
+            'underlay-opacity': 'mapData(heat, 0, 1, 0.08, 0.42)',
+            'underlay-padding': 'mapData(heat, 0, 1, 2, 10)',
+          } },
         { selector: 'node[matched = 1]', style: { 'border-width': 2, 'border-color': accent } },
         { selector: 'node:selected', style: { 'border-width': 2, 'border-color': ink } },
         { selector: '.dimmed', style: { opacity: 0.1 } },
@@ -2215,6 +2226,9 @@ function renderGraphFor(cwd) {
     legendBox.append(item);
   };
   leg('sw-imports', 'imports');
+  if ([...keep.values()].some((n) => n.tokensRead > 0)) {
+    leg('sw-heat', 'halo + size boost = tokens read (loaded window)');
+  }
   if (drawn.some((e) => e.kind === 'mentions')) leg('sw-mentions', 'doc mentions');
   if (drawn.some((e) => e.kind === 'observed')) leg('sw-observed', 'doc used with code');
   if (docKeep.size > 0) leg('sw-doc', 'doc');
