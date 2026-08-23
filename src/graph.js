@@ -561,6 +561,42 @@ function gitHead(cwd) {
   }
 }
 
+// ------------------------------------------------------------------ query
+
+// Everything the graph knows about nodes matching `needle` — the on-demand
+// reference lookup. A rendered view can only show a subset of a
+// thousands-of-files graph; this answers precisely from the whole artifact.
+export function queryGraph(graph, needle, { limit = 5 } = {}) {
+  const q = String(needle).replace(/\\/g, '/').toLowerCase();
+  const hits = graph.nodes
+    .filter((n) => n.kind !== 'external' && n.id.toLowerCase().includes(q))
+    .slice(0, limit);
+  const byW = (a, b) => (b.weight || 0) - (a.weight || 0);
+  return hits.map((n) => {
+    const imports = [];
+    const importedBy = [];
+    const packages = [];
+    const docs = [];
+    for (const e of graph.edges || []) {
+      if (e.from === n.id) {
+        if (String(e.to).startsWith('pkg:')) packages.push({ id: e.to.slice(4), weight: e.weight });
+        else if (e.kind === 'imports') imports.push({ id: e.to, weight: e.weight });
+        else docs.push({ id: e.to, kind: e.kind, sessions: e.sessions });
+      } else if (e.to === n.id) {
+        if (e.kind === 'imports') importedBy.push({ id: e.from, weight: e.weight });
+        else docs.push({ id: e.from, kind: e.kind, sessions: e.sessions });
+      }
+    }
+    return {
+      node: n,
+      imports: imports.sort(byW),
+      importedBy: importedBy.sort(byW),
+      packages: packages.sort(byW),
+      docs,
+    };
+  });
+}
+
 // Commits on HEAD since the graph was built — the staleness signal. null
 // means "age unknown" (no git, unknown sha): shown as such, never silence.
 export function gitBehind(cwd, head) {
@@ -587,6 +623,46 @@ if (isMain) {
     const i = args.indexOf(flag);
     return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
   };
+
+  // query mode: answer from an already-built artifact.
+  //   node src/graph.js query <project> <path-or-name> [--limit 5]
+  if (args[0] === 'query') {
+    const project = args[1];
+    const needle = args[2];
+    if (!project || !needle) {
+      console.error('usage: node src/graph.js query <project> <path-or-name> [--limit 5]');
+      process.exit(2);
+    }
+    const file = path.join(project, '.claude', 'context', 'graph.json');
+    let graph;
+    try {
+      graph = JSON.parse(await fsp.readFile(file, 'utf8'));
+    } catch {
+      console.error(`no graph at ${file} — build one first (dashboard "build graph" or POST /api/graph)`);
+      process.exit(1);
+    }
+    const results = queryGraph(graph, needle, { limit: Number(argOf('--limit', 5)) });
+    if (results.length === 0) {
+      console.log(`no nodes match "${needle}" (granularity: ${graph.meta.granularity})`);
+    }
+    for (const r of results) {
+      const n = r.node;
+      console.log(`${n.id}  [${n.kind}]` +
+        (n.files ? `  ${n.files} files` : '') +
+        (n.tokensRead ? `  ~${n.tokensRead} tok read` : ''));
+      const line = (label, list, fmt) => {
+        if (list.length === 0) return;
+        console.log(`  ${label} ` + list.slice(0, 12).map(fmt).join(', ') +
+          (list.length > 12 ? `, +${list.length - 12} more` : ''));
+      };
+      line('imports ->', r.imports, (x) => `${x.id} (${x.weight})`);
+      line('imported by <-', r.importedBy, (x) => `${x.id} (${x.weight})`);
+      line('packages:', r.packages, (x) => x.id);
+      line('docs:', r.docs, (x) =>
+        `${x.id} (${x.kind}${x.sessions ? `, ${x.sessions} sess` : ''})`);
+    }
+    process.exit(0);
+  }
   const target = args.find((a) => !a.startsWith('--') && a !== argOf('--granularity') &&
     a !== argOf('--max-nodes') && a !== argOf('--out')) || '.';
   const opts = {

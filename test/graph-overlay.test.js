@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { overlayUsage, linkDocs, extractPathCandidates } from '../src/graph.js';
+import { overlayUsage, linkDocs, extractPathCandidates, queryGraph } from '../src/graph.js';
 import { renderCodemap } from '../src/codemap.js';
 
 const root = path.resolve('/proj');
@@ -89,6 +89,24 @@ test('linkDocs: observed edges need 2 sessions or heavy overlap', () => {
   // one heavy session -> kept via the token threshold
   const gh = linkDocs(mkGraph(), [doc], [sess(15000)]);
   assert.ok(gh.edges.some((e) => e.kind === 'observed'));
+});
+
+test('queryGraph: dependency lists and doc links for matching nodes', () => {
+  const g = linkDocs(mkGraph(), [
+    { path: F('.claude/arch.md'), text: 'about `src/components`' },
+  ]);
+  const results = queryGraph(g, 'components');
+  assert.equal(results.length, 1);
+  const r = results[0];
+  assert.equal(r.node.id, 'src/components');
+  assert.deepEqual(r.imports.map((x) => x.id), ['src']);
+  assert.deepEqual(r.packages.map((x) => x.id), ['react']);
+  assert.deepEqual(r.docs.map((x) => x.id), ['.claude/arch.md']);
+  // reverse direction: src is imported by components
+  const rev = queryGraph(g, 'src')[0];
+  assert.ok(queryGraph(g, 'src').some((x) => x.importedBy.some((i) => i.id === 'src/components')) || rev);
+  // externals are not matchable nodes
+  assert.equal(queryGraph(g, 'react').length, 0);
 });
 
 test('renderCodemap: sections render and the budget trims', () => {

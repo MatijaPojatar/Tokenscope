@@ -19,7 +19,7 @@ const state = {
   detail: {},      // id -> full session model
   selected: null,
   pinned: false,   // user clicked a session; stop auto-following
-  view: 'session', // 'session' | 'docs' | 'mcp' | 'trends' (cross-session reports)
+  view: 'sessions', // 'sessions' (list page) | 'session' (detail) | 'docs' | 'mcp' | 'trends' | 'map'
   rateLimits: null,
   report: { read: [], unused: [] },
   reportFetched: 0,
@@ -29,11 +29,11 @@ const state = {
   trendsFetched: 0,
   fileMap: null,
   fileMapFetched: 0,
-  mapProject: null, // selected project cwd on the map page
-  mapMode: 'bubbles', // 'bubbles' | 'graph' — codebase map display mode
+  mapProject: null, // selected project cwd — shared by the map and graph pages
   graphs: {}, // lowercased cwd -> knowledge graph, null = none built yet
   graphFetching: null, // lowercased cwd with a GET in flight
   graphBuilding: false,
+  graphFilter: '', // path filter in graph mode — matches + import neighbors
   scrub: null, // {id, i} — session + timeline index while time-scrubbing the gauge
   ctxGen: {}, // session id -> {running, msg} — context-file generation status
   planGen: {}, // session id -> {running, msg} — optimize-plan generation status
@@ -221,22 +221,55 @@ function openSect(key) {
   if (h && h.parentElement.classList.contains('closed')) h.click();
 }
 
-// ---- sidebar ----
+// ---- sessions page ----
 
-function renderList() {
-  const box = $('session-list');
+function renderSessionsPage() {
+  const box = $('sessions-rows');
   box.replaceChildren();
+  if (state.sessions.length === 0) {
+    box.append(el('div', 'empty', 'waiting for sessions…'));
+    return;
+  }
   for (const s of state.sessions) {
-    const item = el('div', 'session-item' + (s.id === state.selected ? ' active' : ''));
-    item.append(el('div', 'st', s.title || s.id.slice(0, 8)));
-    const meta = el('div', 'sm');
-    meta.append(
-      el('span', null, fmtTok(s.contextNow) + ' ctx'),
-      el('span', null, (s.compactions ? `⟲${s.compactions} · ` : '') + fmtAgo(s.lastActivity)),
+    const live = s.lastActivity && Date.now() - new Date(s.lastActivity).getTime() < 120000;
+    const card = el('div', 'session-card' + (s.id === state.selected ? ' active' : ''));
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+
+    const top = el('div', 'sc-top');
+    top.append(
+      el('span', 'dot' + (live ? ' on' : '')),
+      el('span', 'sc-title', s.title || s.id.slice(0, 8)),
+      el('span', 'sc-ago mono', fmtAgo(s.lastActivity)),
     );
-    item.append(meta);
-    item.onclick = () => { state.selected = s.id; state.pinned = true; state.view = 'session'; render(); };
-    box.append(item);
+    card.append(top);
+    if (s.cwd) card.append(el('div', 'sc-cwd mono', s.cwd));
+
+    const win = s.window || 200000;
+    const pct = win ? (s.contextNow || 0) / win : 0;
+    const bar = el('div', 'sc-bar');
+    const fill = el('div', pct > 0.9 ? 'crit' : pct > 0.75 ? 'warn' : null);
+    fill.style.width = Math.min(100, pct * 100) + '%';
+    bar.append(fill);
+    const barrow = el('div', 'sc-barrow');
+    barrow.append(bar, el('span', 'mono sc-ctx', `${fmtTok(s.contextNow)} / ${fmtTok(win)}`));
+    card.append(barrow);
+
+    const bits = [];
+    if (s.model) bits.push(String(s.model).replace(/^claude-/, ''));
+    if (s.costUsd != null) bits.push(fmtUsd(s.costUsd));
+    if (s.agentCount) bits.push(`${s.agentCount} agent${s.agentCount === 1 ? '' : 's'}`);
+    if (s.compactions) bits.push(`⟲${s.compactions}`);
+    const meta = el('div', 'sc-meta mono', bits.join(' · '));
+    meta.title = bits.join(' · ');
+    card.append(meta);
+
+    const open = () => { state.selected = s.id; state.pinned = true; state.view = 'session'; render(); };
+    card.onclick = open;
+    card.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
+    };
+    box.append(card);
   }
 }
 
@@ -332,7 +365,18 @@ function renderGauge(s) {
   $('g-num').textContent = (snap ? `⏱ ${fmtClock(snap.ts)} · ` : '') +
     `${fmtTok(used)} / ${fmtTok(win)} · ${Math.round((used / win) * 100)}%`;
   const gauge = $('gauge');
-  gauge.replaceChildren();
+  // one persistent segment per category so live width changes glide via the
+  // CSS transition instead of snapping; scrubbing bypasses it (would lag)
+  if (gauge.childElementCount !== CATS.length) {
+    gauge.replaceChildren();
+    for (const [k] of CATS) {
+      const seg = document.createElement('div');
+      seg.style.background = catColor(k);
+      seg.style.width = '0%';
+      gauge.append(seg);
+    }
+  }
+  gauge.classList.toggle('scrubbing', !!snap);
   const legend = $('legend');
   legend.replaceChildren();
   // CATS order mirrors CAT_KEYS in src/attribution.js — snapshot buckets
@@ -344,17 +388,15 @@ function renderGauge(s) {
   const scale = ctxSum > 0 ? Math.min(1, used / ctxSum) : 0;
   CATS.forEach(([k, label], i) => {
     const v = bucket(k, i);
-    if (v <= 0) return;
-    const seg = document.createElement('div');
-    seg.style.width = ((v * scale) / win) * 100 + '%';
-    seg.style.background = catColor(k);
+    const seg = gauge.children[i];
+    seg.style.width = v <= 0 ? '0%' : ((v * scale) / win) * 100 + '%';
+    if (v <= 0) { seg.title = ''; return; }
     let title = `${label}: ${fmtTok(v)}`;
     if (!snap && k === 'output' && s.outputBreakdown) {
       const b = s.outputBreakdown;
       title += ` — thinking ~${fmtTok(b.thinking)} · text ~${fmtTok(b.text)} · tool calls ~${fmtTok(b.toolUse)}`;
     }
     seg.title = title;
-    gauge.append(seg);
     const li = el('span');
     const sw = el('i', 'swatch');
     sw.style.background = catColor(k);
@@ -431,7 +473,7 @@ function renderScrubber(s) {
   info.id = 'scrub-info';
   info.hidden = true;
   box.append(info);
-  const liveBtn = el('button', 'scrub-live', '⏵ live');
+  const liveBtn = el('button', 'scrub-live primary', '⏵ live');
   liveBtn.onclick = (e) => {
     e.stopPropagation();
     state.scrub = null;
@@ -558,14 +600,19 @@ function renderDetail() {
       ? el('span', 'tp cs', '⟲ compaction summary — what the model kept of the dropped history')
       : el('span', 'tp', '> ' + (t.prompt || ''));
     if (t.compactSummary) tp.title = t.prompt || '';
+    const chev = el('span', 'chev', expanded ? '▾' : '▸');
     head.append(
-      el('span', 'chev', expanded ? '▾' : '▸'),
+      chev,
       tp,
       el('span', 'tt', `${t.ts ? fmtClock(t.ts) + ' · ' : ''}${t.actions.length} actions · +${fmtTok(t.fresh)} in · ${fmtTok(t.output)} out`),
     );
+    // toggle in place (no re-render) so the collapse transition can play
     const toggle = () => {
-      state.turnToggles[key] = !expanded;
-      renderDetail();
+      const open = turn.classList.contains('collapsed');
+      state.turnToggles[key] = open;
+      turn.classList.toggle('collapsed', !open);
+      head.setAttribute('aria-expanded', String(open));
+      chev.textContent = open ? '▾' : '▸';
     };
     head.onclick = toggle;
     head.onkeydown = (e) => {
@@ -657,22 +704,33 @@ function renderDetail() {
       const rowKey = `${s.id}|${id}`;
       const open = !!state.baseToggles[rowKey];
       const r = el('div', 'base-row' + (detail ? ' exp' : ''));
-      r.append(el('span', null, (detail ? (open ? '▾ ' : '▸ ') : '') + k), el('b', null, v));
+      const kSpan = el('span', null, (detail ? (open ? '▾ ' : '▸ ') : '') + k);
+      r.append(kSpan, el('b', null, v));
       container.append(r);
       if (!detail) return;
       r.tabIndex = 0;
       r.setAttribute('role', 'button');
       r.setAttribute('aria-expanded', String(open));
-      const tgl = () => { state.baseToggles[rowKey] = !open; renderDetail(); };
+      // detail always renders inside a fold wrapper; toggling flips the
+      // fold in place (no re-render) so the collapse transition can play
+      const fold = el('div', 'base-fold' + (open ? ' open' : ''));
+      const clip = el('div', 'fold-clip');
+      const box = el('div', 'base-detail');
+      for (const line of detail().filter(Boolean)) box.append(el('div', null, line));
+      clip.append(box);
+      fold.append(clip);
+      container.append(fold);
+      const tgl = () => {
+        const now = !fold.classList.contains('open');
+        state.baseToggles[rowKey] = now;
+        fold.classList.toggle('open', now);
+        r.setAttribute('aria-expanded', String(now));
+        kSpan.textContent = (now ? '▾ ' : '▸ ') + k;
+      };
       r.onclick = tgl;
       r.onkeydown = (e) => {
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tgl(); }
       };
-      if (open) {
-        const box = el('div', 'base-detail');
-        for (const line of detail().filter(Boolean)) box.append(el('div', null, line));
-        container.append(box);
-      }
     },
   });
 
@@ -790,7 +848,7 @@ function renderDetail() {
   if (allSuggs.length > 0) {
     const pg = state.planGen[s.id];
     const bar = el('div', 'plan-bar');
-    const planBtn = el('button', 'ctx-btn', 'generate plan');
+    const planBtn = el('button', 'ctx-btn primary', 'generate plan');
     planBtn.title = 'Have your local claude CLI turn these findings into a prioritized optimization plan (billed to your account), saved under the project’s .claude\\context\\';
     planBtn.disabled = !!(pg && pg.running);
     planBtn.onclick = async () => {
@@ -1465,6 +1523,7 @@ function stopMapSim() {
 }
 
 let graphCy = null; // cytoscape instance behind the map's graph mode
+let graphRenderSeq = 0; // aborts deferred graph mounts that a re-render outdated
 
 function destroyGraphCy() {
   if (graphCy) {
@@ -1479,36 +1538,21 @@ const MAP_COLORS = [
   'var(--c-toolOther)', 'var(--c-recache)', 'var(--c-attachments)',
 ];
 
-function renderMap() {
-  stopMapSim();
-  destroyGraphCy();
-  const canvas = $('map-canvas');
-  const projBox = $('map-projects');
-  const legendBox = $('map-legend');
-  const summary = $('map-summary');
-  canvas.replaceChildren();
+// Shared preamble for the map and graph pages: both need the file-map report
+// and a valid selected project. Renders the project picker into `projBox` and
+// returns the selected project, or null (after writing a status) if the
+// report isn't usable yet.
+function mapPreamble(projBox, summary, rerender) {
   projBox.replaceChildren();
-  legendBox.replaceChildren();
-  const graphMode = state.mapMode === 'graph';
-  canvas.parentElement.classList.toggle('graph-layout', graphMode);
-  $('map-report').classList.toggle('graph-full', graphMode);
-  $('mode-bubbles').classList.toggle('active', !graphMode);
-  $('mode-graph').classList.toggle('active', graphMode);
-  $('graph-controls').hidden = !graphMode;
-  if (!graphMode) $('graph-status').textContent = '';
-  $('map-sub').textContent = graphMode
-    ? 'import structure between modules — dependencies flow left → right, docs sit beside the code they cover'
-    : 'rectangle size = tokens spent reading the file, across every loaded session and agent';
   const report = state.fileMap;
   if (!report) {
     summary.textContent = 'loading…';
-    return;
+    return null;
   }
   if (report.length === 0) {
     summary.textContent = 'no file reads in the loaded window';
-    return;
+    return null;
   }
-
   if (!state.mapProject || !report.some((p) => p.cwd === state.mapProject)) {
     state.mapProject = report[0].cwd;
   }
@@ -1516,15 +1560,21 @@ function renderMap() {
     const b = el('button', p.cwd === state.mapProject ? 'active' : '');
     b.textContent = p.cwd.replace(/\//g, '\\').split('\\').slice(-2).join('\\');
     b.title = `${p.cwd} — ${fmtTok(p.totalTokens)} read`;
-    b.onclick = () => { state.mapProject = p.cwd; renderMap(); };
+    b.onclick = () => { state.mapProject = p.cwd; replayEntry(); rerender(); };
     projBox.append(b);
   }
-  const proj = report.find((p) => p.cwd === state.mapProject);
+  return report.find((p) => p.cwd === state.mapProject);
+}
 
-  if (graphMode) {
-    renderGraphMode(proj.cwd);
-    return;
-  }
+function renderMap() {
+  stopMapSim();
+  const canvas = $('map-canvas');
+  const legendBox = $('map-legend');
+  const summary = $('map-summary');
+  canvas.replaceChildren();
+  legendBox.replaceChildren();
+  const proj = mapPreamble($('map-projects'), summary, renderMap);
+  if (!proj) return;
 
   // group files by top-level directory relative to the project root
   const prefix = proj.cwd.replace(/\//g, '\\').replace(/\\+$/, '') + '\\';
@@ -1853,14 +1903,26 @@ function renderMapDetail(n, proj) {
   }
 }
 
-// Graph mode of the codebase map: modules as circles (area = source files),
-// docs as squares, edges from the project's built knowledge graph. Springs
-// along edges + collision, settled synchronously before first paint like
-// the bubble view; nodes stay draggable and their edges follow.
-function renderGraphMode(cwd) {
-  const canvas = $('map-canvas');
-  const legendBox = $('map-legend');
-  const summary = $('map-summary');
+// Knowledge-graph page: modules as circles (area = source files), docs as
+// squares, edges from the project's built knowledge graph. Layout and all
+// interaction (pan, zoom, drag) are cytoscape's.
+function renderGraphPage() {
+  destroyGraphCy();
+  const summary = $('graph-summary');
+  $('graph-canvas').replaceChildren();
+  $('graph-legend').replaceChildren();
+  const proj = mapPreamble($('graph-projects'), summary, renderGraphPage);
+  if (!proj) {
+    renderGraphDetail(null, null);
+    return;
+  }
+  renderGraphFor(proj.cwd);
+}
+
+function renderGraphFor(cwd) {
+  const canvas = $('graph-canvas');
+  const legendBox = $('graph-legend');
+  const summary = $('graph-summary');
   const status = $('graph-status');
   const key = cwd.toLowerCase();
   const graph = state.graphs[key];
@@ -1886,13 +1948,37 @@ function renderGraphMode(cwd) {
         : ` · ${m.behind} commit${m.behind === 1 ? '' : 's'} behind`);
   if (m.behind > 0) status.classList.add('stale');
 
-  // modules by usage then size; docs only when they link to a kept module
-  const code = graph.nodes.filter((n) => n.kind === 'folder' || n.kind === 'file')
-    .sort((a, b) => (b.tokensRead || 0) - (a.tokensRead || 0) || (b.files || 0) - (a.files || 0));
-  const MAXN = 60;
-  const keep = new Map(code.slice(0, MAXN).map((n) => [n.id, n]));
-  const docIds = new Set(graph.nodes.filter((n) => n.kind === 'doc').map((n) => n.id));
+  // What fits on screen is picked by structural importance (import degree,
+  // then size) — usage sizes and colors nodes but must NOT gate visibility,
+  // or the view degrades into "files recent sessions touched". The path
+  // filter shows matching nodes plus their direct import neighbors.
   const inner = (graph.edges || []).filter((e) => !String(e.to).startsWith('pkg:'));
+  const docIds = new Set(graph.nodes.filter((n) => n.kind === 'doc').map((n) => n.id));
+  const code = graph.nodes.filter((n) => n.kind === 'folder' || n.kind === 'file');
+  const degree = new Map();
+  for (const e of inner) {
+    if (e.kind !== 'imports') continue;
+    degree.set(e.from, (degree.get(e.from) || 0) + 1);
+    degree.set(e.to, (degree.get(e.to) || 0) + 1);
+  }
+  const rank = (a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0) ||
+    (b.files || 0) - (a.files || 0) || (b.tokensRead || 0) - (a.tokensRead || 0);
+  const q = (state.graphFilter || '').trim().toLowerCase();
+  let matchedIds = null;
+  let keepArr;
+  if (q) {
+    matchedIds = new Set(code.filter((n) => n.id.toLowerCase().includes(q)).map((n) => n.id));
+    const neigh = new Set(matchedIds);
+    for (const e of inner) {
+      if (e.kind !== 'imports') continue;
+      if (matchedIds.has(e.from)) neigh.add(e.to);
+      if (matchedIds.has(e.to)) neigh.add(e.from);
+    }
+    keepArr = code.filter((n) => neigh.has(n.id)).sort(rank);
+  } else {
+    keepArr = [...code].sort(rank);
+  }
+  const keep = new Map(keepArr.map((n) => [n.id, n]));
   const docKeep = new Map();
   for (const e of inner) {
     if (docIds.has(e.from) && keep.has(e.to) && !docKeep.has(e.from)) {
@@ -1900,7 +1986,22 @@ function renderGraphMode(cwd) {
     }
   }
   const has = (id) => keep.has(id) || docKeep.has(id);
-  const drawn = inner.filter((e) => has(e.from) && has(e.to));
+  const allDrawn = inner.filter((e) => has(e.from) && has(e.to));
+  // edge budget: layout cost is driven by edge count — over budget, keep
+  // the heaviest import edges (doc edges always stay) and say what's hidden.
+  // The budget grows with the node count so an "all nodes" view keeps a
+  // proportionate share of its edges.
+  const EDGE_MAX = Math.max(1200, Math.min(9000, keep.size * 3));
+  let hiddenEdges = 0;
+  let drawn = allDrawn;
+  if (allDrawn.length > EDGE_MAX) {
+    const docEdges = allDrawn.filter((e) => e.kind !== 'imports');
+    const importEdges = allDrawn.filter((e) => e.kind === 'imports')
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, Math.max(100, EDGE_MAX - docEdges.length));
+    hiddenEdges = allDrawn.length - importEdges.length - docEdges.length;
+    drawn = [...importEdges, ...docEdges];
+  }
 
   if (typeof cytoscape === 'undefined' || typeof dagre === 'undefined') {
     summary.textContent = 'vendor scripts missing (public\\vendor) — graph view unavailable';
@@ -1932,6 +2033,7 @@ function renderGraphMode(cwd) {
       size: Math.min(80, Math.max(22, 12 * Math.pow(n.files || 1, 0.25))),
       color: colorOf(n),
       kind: 'code',
+      matched: matchedIds && matchedIds.has(n.id) ? 1 : 0,
     } });
   }
   for (const d of docKeep.values()) {
@@ -1943,73 +2045,118 @@ function renderGraphMode(cwd) {
 
   // cytoscape renders and handles all interaction (pan, zoom, drag);
   // cytoscape-dagre lays the import DAG out in left→right ranks
-  graphCy = cytoscape({
-    container: canvas,
-    elements: elems,
-    minZoom: 0.15,
-    maxZoom: 3,
-    wheelSensitivity: 0.2,
-    style: [
-      { selector: 'node[kind = "code"]',
-        style: {
-          width: 'data(size)',
-          height: 'data(size)',
-          'background-color': 'data(color)',
-          'background-opacity': 0.9,
-          label: 'data(label)',
-          'font-size': 9,
-          'font-family': mono,
-          color: ink,
-          'text-valign': 'center',
-          'text-halign': 'center',
-          'text-wrap': 'ellipsis',
-          'text-max-width': 78,
-        } },
-      { selector: 'node[kind = "doc"]',
-        style: {
-          shape: 'round-rectangle',
-          width: 30,
-          height: 20,
-          'background-color': panel2,
-          'border-width': 1.5,
-          'border-color': accent,
-          label: 'data(label)',
-          'font-size': 8,
-          'font-family': mono,
-          color: ink,
-          'text-valign': 'bottom',
-          'text-margin-y': 4,
-        } },
-      { selector: 'edge',
-        style: { 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.75 } },
-      { selector: 'edge[kind = "imports"]',
-        style: {
-          width: `mapData(weight, 1, ${maxW}, 1, 5)`,
-          'line-color': mutedC,
-          'target-arrow-color': mutedC,
-          opacity: 0.45,
-        } },
-      { selector: 'edge[kind = "mentions"]',
-        style: { width: 1.2, 'line-style': 'dotted', 'line-color': accent, 'target-arrow-shape': 'none', opacity: 0.7 } },
-      { selector: 'edge[kind = "observed"]',
-        style: { width: 2.2, 'line-style': 'dashed', 'line-color': accent, 'target-arrow-shape': 'none', opacity: 0.9 } },
-      { selector: 'node:selected', style: { 'border-width': 2, 'border-color': ink } },
-      { selector: '.dimmed', style: { opacity: 0.1 } },
-    ],
-    layout: { name: 'dagre', rankDir: 'LR', nodeSep: 18, rankSep: 85, edgeSep: 8, padding: 14 },
-  });
-  // hover isolates a node's neighborhood — the main hairball antidote
-  graphCy.on('mouseover', 'node', (evt) => {
-    graphCy.elements().not(evt.target.closedNeighborhood()).addClass('dimmed');
-  });
-  graphCy.on('mouseout', 'node', () => graphCy.elements().removeClass('dimmed'));
-  graphCy.on('tap', 'node', (evt) => {
-    const n = (graph.nodes || []).find((x) => x.id === evt.target.id());
-    renderGraphDetail(n || null, graph);
-  });
-  graphCy.on('tap', (evt) => {
-    if (evt.target === graphCy) renderGraphDetail(null, graph);
-  });
+  // dagre's layered layout is worth a short pause on mid-size graphs but
+  // freezes the tab on big ones — those get the banded top→bottom layout
+  // (bandedPositions) with cheap haystack edges. The mount is deferred a
+  // frame so the "laying out…" notice paints before the main thread blocks,
+  // and the sequence counter aborts a stale mount if the view re-rendered.
+  const heavy = keep.size + docKeep.size > 300 || drawn.length > 900;
+  const huge = keep.size > 900; // full-codebase view: degrade gracefully
+  let layout;
+  if (heavy) {
+    const posMap = bandedPositions(
+      [...keep.values()], [...docKeep.values()], drawn, canvas.clientWidth || 900);
+    layout = {
+      name: 'preset',
+      positions: (node) => posMap.get(node.id()) || { x: 0, y: 0 },
+      fit: true,
+      padding: 14,
+    };
+  } else {
+    layout = { name: 'dagre', rankDir: 'TB', nodeSep: 18, rankSep: 85, edgeSep: 8, padding: 14 };
+  }
+  summary.textContent = `laying out ${keep.size + docKeep.size} nodes · ${drawn.length} edges…`;
+  const seq = ++graphRenderSeq;
+  setTimeout(() => {
+    if (seq !== graphRenderSeq || state.view !== 'graph') return;
+    graphCy = cytoscape({
+      container: canvas,
+      elements: elems,
+      minZoom: huge ? 0.03 : 0.15,
+      maxZoom: 3,
+      wheelSensitivity: 0.2,
+      // full-codebase view: labels appear only once zoomed in, edges hide
+      // while panning, render at 1x — keeps thousands of nodes responsive
+      ...(huge ? { pixelRatio: 1, textureOnViewport: true, hideEdgesOnViewport: true } : {}),
+      style: [
+        { selector: 'node[kind = "code"]',
+          style: {
+            width: 'data(size)',
+            height: 'data(size)',
+            'background-color': 'data(color)',
+            'background-opacity': 0.9,
+            label: 'data(label)',
+            'font-size': 9,
+            'font-family': mono,
+            color: ink,
+            'text-valign': 'center',
+            'text-halign': 'center',
+            'text-wrap': 'ellipsis',
+            'text-max-width': 78,
+            ...(huge ? { 'min-zoomed-font-size': 8 } : {}),
+          } },
+        { selector: 'node[kind = "doc"]',
+          style: {
+            shape: 'round-rectangle',
+            width: 30,
+            height: 20,
+            'background-color': panel2,
+            'border-width': 1.5,
+            'border-color': accent,
+            label: 'data(label)',
+            'font-size': 8,
+            'font-family': mono,
+            color: ink,
+            'text-valign': 'bottom',
+            'text-margin-y': 4,
+          } },
+        { selector: 'edge',
+          style: heavy
+            ? { 'curve-style': 'haystack', 'haystack-radius': 0.3 }
+            : { 'curve-style': 'bezier', 'target-arrow-shape': 'triangle', 'arrow-scale': 0.75 } },
+        { selector: 'edge[kind = "imports"]',
+          style: {
+            width: `mapData(weight, 1, ${maxW}, 1, 5)`,
+            'line-color': mutedC,
+            'target-arrow-color': mutedC,
+            opacity: 0.45,
+          } },
+        { selector: 'edge[kind = "mentions"]',
+          style: { width: 1.2, 'curve-style': 'bezier', 'line-style': 'dotted', 'line-color': accent, 'target-arrow-shape': 'none', opacity: 0.7 } },
+        { selector: 'edge[kind = "observed"]',
+          style: { width: 2.2, 'curve-style': 'bezier', 'line-style': 'dashed', 'line-color': accent, 'target-arrow-shape': 'none', opacity: 0.9 } },
+        { selector: 'node[matched = 1]', style: { 'border-width': 2, 'border-color': accent } },
+        { selector: 'node:selected', style: { 'border-width': 2, 'border-color': ink } },
+        { selector: '.dimmed', style: { opacity: 0.1 } },
+      ],
+      layout,
+    });
+    // hover isolates a node's neighborhood — skipped on big graphs where
+    // the per-hover class sweep itself would lag
+    if (elems.length <= 1200) {
+      graphCy.on('mouseover', 'node', (evt) => {
+        const hood = evt.target.closedNeighborhood();
+        graphCy.batch(() => graphCy.elements().not(hood).addClass('dimmed'));
+      });
+      graphCy.on('mouseout', 'node', () => {
+        graphCy.batch(() => graphCy.elements().removeClass('dimmed'));
+      });
+    }
+    graphCy.on('tap', 'node', (evt) => {
+      const n = (graph.nodes || []).find((x) => x.id === evt.target.id());
+      renderGraphDetail(n || null, graph);
+    });
+    graphCy.on('tap', (evt) => {
+      if (evt.target === graphCy) renderGraphDetail(null, graph);
+    });
+    summary.textContent =
+      `${keep.size} of ${code.length} modules · ${drawn.filter((e) => e.kind === 'imports').length} import edges` +
+      (hiddenEdges > 0 ? ` (${hiddenEdges} weak edges hidden)` : '') +
+      ` · ${docKeep.size} doc${docKeep.size === 1 ? '' : 's'} linked · granularity ${m.granularity}` +
+      (heavy ? ' · banded layout — filter for the fully layered view' : '') +
+      (q ? ` · filter "${q}": ${matchedIds.size} matched + import neighbors`
+        : code.length > keep.size ? ` · showing the ${keep.size} most connected — filter to reach the rest` : '');
+  }, 30);
   renderGraphDetail(null, graph);
 
 
@@ -2022,17 +2169,77 @@ function renderGraphMode(cwd) {
   if (drawn.some((e) => e.kind === 'mentions')) leg('sw-mentions', 'doc mentions');
   if (drawn.some((e) => e.kind === 'observed')) leg('sw-observed', 'doc used with code');
   if (docKeep.size > 0) leg('sw-doc', 'doc');
-
-  summary.textContent =
-    `${keep.size} modules · ${drawn.filter((e) => e.kind === 'imports').length} import edges · ` +
-    `${docKeep.size} doc${docKeep.size === 1 ? '' : 's'} linked · granularity ${m.granularity}` +
-    (code.length > keep.size ? ` · top ${keep.size} of ${code.length} modules shown` : '');
 }
 
-// Detail panel for graph mode: a module's dependency lists and linked docs,
-// or a doc's routed code areas with their evidence.
+// Fast vertical layout for big graphs: real dependency ranks via a Kahn
+// pass (longest path), each wide rank wraps into rows, the whole graph
+// flows top→bottom in bands. No crossing minimization — that's exactly
+// what makes it instant where dagre freezes the tab.
+function bandedPositions(codeNodes, docNodes, edges, W) {
+  const ids = new Set(codeNodes.map((n) => n.id));
+  const outAdj = new Map();
+  const indeg = new Map();
+  for (const id of ids) {
+    outAdj.set(id, []);
+    indeg.set(id, 0);
+  }
+  for (const e of edges) {
+    if (e.kind !== 'imports' || !ids.has(e.from) || !ids.has(e.to)) continue;
+    outAdj.get(e.from).push(e.to);
+    indeg.set(e.to, indeg.get(e.to) + 1);
+  }
+  const rank = new Map();
+  let queue = [...ids].filter((id) => indeg.get(id) === 0);
+  queue.forEach((id) => rank.set(id, 0));
+  while (queue.length > 0) {
+    const next = [];
+    for (const id of queue) {
+      for (const t of outAdj.get(id)) {
+        rank.set(t, Math.max(rank.get(t) || 0, rank.get(id) + 1));
+        indeg.set(t, indeg.get(t) - 1);
+        if (indeg.get(t) === 0) next.push(t);
+      }
+    }
+    queue = next;
+  }
+  let maxRank = 0;
+  for (const r of rank.values()) maxRank = Math.max(maxRank, r);
+  for (const id of ids) {
+    if (!rank.has(id)) rank.set(id, maxRank + 1); // cycle members: own band
+  }
+  const bands = new Map();
+  for (const n of codeNodes) {
+    const r = rank.get(n.id);
+    if (!bands.has(r)) bands.set(r, []);
+    bands.get(r).push(n);
+  }
+  const CELL = 34;
+  const perRow = Math.max(8, Math.floor((W - 40) / CELL));
+  const pos = new Map();
+  let y = 30;
+  for (const r of [...bands.keys()].sort((a, b) => a - b)) {
+    // alphabetical = folder-adjacent, so directories cluster within a band
+    const list = bands.get(r).sort((a, b) => a.id.localeCompare(b.id));
+    list.forEach((n, i) => {
+      pos.set(n.id, {
+        x: 20 + (i % perRow) * CELL + CELL / 2,
+        y: y + Math.floor(i / perRow) * CELL,
+      });
+    });
+    y += Math.ceil(list.length / perRow) * CELL + 40; // gap between bands
+  }
+  for (const d of docNodes) {
+    const t = edges.find((e) => e.from === d.id && pos.has(e.to));
+    const p = t ? pos.get(t.to) : { x: W / 2, y: 10 };
+    pos.set(d.id, { x: p.x + 18, y: p.y - 26 });
+  }
+  return pos;
+}
+
+// Detail strip for the graph page: a module's dependency lists and linked
+// docs, or a doc's routed code areas with their evidence.
 function renderGraphDetail(n, graph) {
-  const box = $('map-detail');
+  const box = $('graph-detail');
   box.replaceChildren();
   const kv = (k, v) => {
     const r = el('div', 'md-row');
@@ -2041,7 +2248,7 @@ function renderGraphDetail(n, graph) {
   };
   if (!n) {
     box.append(el('div', 'md-hint', graph
-      ? 'Click a node for details. Drag nodes to rearrange, drag the background to pan, scroll to zoom. Hovering a node isolates its neighborhood.\n\nCircles are modules (area = source files), squares are docs. Solid arrows = imports (left → right), dotted = doc mentions its area, dashed = doc observed in use with that code.'
+      ? 'Click a node for details. Drag nodes to rearrange, drag the background to pan, scroll to zoom. Hovering a node isolates its neighborhood.\n\nCircles are modules (area = source files), squares are docs. Solid arrows = imports (top → bottom), dotted = doc mentions its area, dashed = doc observed in use with that code.'
       : 'Build a knowledge graph to see module structure, doc links, and measured usage in one picture.\n\nThe graph is written to .claude\\context\\graph.json; a codemap.md orientation doc can be generated from it.'));
     return;
   }
@@ -2095,7 +2302,7 @@ async function fetchGraph(cwd) {
     state.graphs[key] = null; // collector restarting — shows the build hint
   }
   state.graphFetching = null;
-  if (state.view === 'map' && state.mapMode === 'graph') renderMap();
+  if (state.view === 'graph') renderGraphPage();
 }
 
 async function buildGraphNow(cwd) {
@@ -2117,7 +2324,7 @@ async function buildGraphNow(cwd) {
   }
   state.graphBuilding = false;
   $('graph-build').disabled = false;
-  if (state.view === 'map' && state.mapMode === 'graph') renderMap();
+  if (state.view === 'graph') renderGraphPage();
 }
 
 async function fetchFileMap(force) {
@@ -2128,6 +2335,9 @@ async function fetchFileMap(force) {
     if (res.ok) {
       state.fileMap = await res.json();
       if (state.view === 'map') renderMap();
+      // the graph is an interactive view — a background refresh must not
+      // recompute the layout and throw away the user's pan/zoom
+      else if (state.view === 'graph' && !graphCy) renderGraphPage();
     }
   } catch { /* collector restarting */ }
 }
@@ -2156,29 +2366,66 @@ async function fetchMcpReport(force) {
   } catch { /* collector restarting */ }
 }
 
+// ---- entrance choreography ----
+// Opening a view (or a different session / project) briefly tags its page
+// container with .enter, which lets the staggered child animations play.
+// Live SSE re-renders inside an already-open view never replay them.
+const ENTRY_HOSTS = {
+  sessions: 'sessions-page', session: 'detail', docs: 'report', mcp: 'mcp-report',
+  trends: 'trends-report', map: 'map-report', graph: 'graph-report',
+};
+let entryKey = null;
+let entryTimer = null;
+function replayEntry() {
+  const n = $(ENTRY_HOSTS[state.view]);
+  if (!n) return;
+  n.classList.remove('enter');
+  void n.offsetWidth; // reflow so re-adding the class restarts animations
+  n.classList.add('enter');
+  clearTimeout(entryTimer);
+  entryTimer = setTimeout(() => n.classList.remove('enter'), 900);
+}
+function markEntry() {
+  const key = state.view + (state.view === 'session' ? ':' + state.selected : '');
+  if (key === entryKey) return;
+  if (entryKey) {
+    const prev = $(ENTRY_HOSTS[entryKey.split(':')[0]]);
+    if (prev) prev.classList.remove('enter');
+  }
+  entryKey = key;
+  replayEntry();
+}
+
 function render() {
   if (!state.pinned && state.sessions.length > 0) {
     state.selected = state.sessions[0].id;
   }
-  renderList();
-  $('docs-btn').classList.toggle('active', state.view === 'docs');
-  $('mcp-btn').classList.toggle('active', state.view === 'mcp');
-  $('trends-btn').classList.toggle('active', state.view === 'trends');
-  $('map-btn').classList.toggle('active', state.view === 'map');
+  markEntry();
+  // a session detail belongs to the Sessions section — keep its nav item lit
+  $('nav-sessions').classList.toggle('active', state.view === 'sessions' || state.view === 'session');
+  $('nav-docs').classList.toggle('active', state.view === 'docs');
+  $('nav-mcp').classList.toggle('active', state.view === 'mcp');
+  $('nav-trends').classList.toggle('active', state.view === 'trends');
+  $('nav-map').classList.toggle('active', state.view === 'map');
+  $('nav-graph').classList.toggle('active', state.view === 'graph');
+  $('sessions-page').hidden = state.view !== 'sessions';
   $('report').hidden = state.view !== 'docs';
   $('mcp-report').hidden = state.view !== 'mcp';
   $('trends-report').hidden = state.view !== 'trends';
   $('map-report').hidden = state.view !== 'map';
-  if (state.view !== 'map') {
-    stopMapSim();
-    destroyGraphCy();
-  }
+  $('graph-report').hidden = state.view !== 'graph';
+  if (state.view !== 'map') stopMapSim();
+  if (state.view !== 'graph') destroyGraphCy();
   if (state.view !== 'session') {
     $('empty').hidden = true;
     $('detail').hidden = true;
-    if (state.view === 'docs') renderReport();
+    if (state.view === 'sessions') renderSessionsPage();
+    else if (state.view === 'docs') renderReport();
     else if (state.view === 'mcp') renderMcpReport();
     else if (state.view === 'trends') renderTrends();
+    // an already-mounted graph is interactive — background render() calls
+    // (SSE list events) must not relayout it and drop the user's pan/zoom
+    else if (state.view === 'graph') { if (!graphCy) renderGraphPage(); }
     else renderMap();
   } else {
     renderDetail();
@@ -2222,42 +2469,42 @@ $('ctx-cancel-btn').onclick = () => {
     .finally(() => { $('ctx-cancel-btn').disabled = false; });
 };
 
-// Keep the drawer hover-driven after report-button clicks: a focused button
-// would hold it open (:focus-within) over the content the click revealed.
-$('docs-btn').onclick = () => {
-  state.view = state.view === 'docs' ? 'session' : 'docs';
-  if (state.view === 'docs') fetchReport(true);
+// Keep the rail hover-driven after nav clicks: a focused button would hold
+// it expanded (:focus-within) over the content the click revealed.
+function wireNav(id, view, fetcher) {
+  $(id).onclick = () => {
+    state.view = view;
+    if (fetcher) fetcher(true);
+    render();
+    $(id).blur();
+  };
+}
+wireNav('nav-sessions', 'sessions', null);
+wireNav('nav-docs', 'docs', fetchReport);
+wireNav('nav-mcp', 'mcp', fetchMcpReport);
+wireNav('nav-trends', 'trends', fetchTrends);
+wireNav('nav-map', 'map', fetchFileMap);
+wireNav('nav-graph', 'graph', fetchFileMap);
+
+$('back-btn').onclick = () => {
+  state.view = 'sessions';
   render();
-  $('docs-btn').blur();
 };
 
-$('mcp-btn').onclick = () => {
-  state.view = state.view === 'mcp' ? 'session' : 'mcp';
-  if (state.view === 'mcp') fetchMcpReport(true);
-  render();
-  $('mcp-btn').blur();
-};
-
-$('trends-btn').onclick = () => {
-  state.view = state.view === 'trends' ? 'session' : 'trends';
-  if (state.view === 'trends') fetchTrends(true);
-  render();
-  $('trends-btn').blur();
-};
-
-$('map-btn').onclick = () => {
-  state.view = state.view === 'map' ? 'session' : 'map';
-  if (state.view === 'map') fetchFileMap(true);
-  render();
-  $('map-btn').blur();
-};
-
-$('mode-bubbles').onclick = () => { state.mapMode = 'bubbles'; renderMap(); };
-$('mode-graph').onclick = () => { state.mapMode = 'graph'; renderMap(); };
 $('graph-build').onclick = () => { if (state.mapProject) buildGraphNow(state.mapProject); };
+let graphFilterTimer = null;
+$('graph-filter').addEventListener('input', () => {
+  clearTimeout(graphFilterTimer);
+  graphFilterTimer = setTimeout(() => {
+    state.graphFilter = $('graph-filter').value;
+    if (state.view === 'graph') renderGraphPage();
+  }, 250);
+});
 
 window.addEventListener('resize', () => {
   if (state.view === 'map') renderMap();
+  // relayout would discard the user's pan/zoom — just refit the viewport
+  else if (state.view === 'graph' && graphCy) graphCy.resize();
 });
 
 // ---- SSE ----
@@ -2275,7 +2522,7 @@ es.onmessage = (msg) => {
     if (state.view === 'docs') fetchReport(false);
     if (state.view === 'mcp') fetchMcpReport(false);
     if (state.view === 'trends') fetchTrends(false);
-    if (state.view === 'map') fetchFileMap(false);
+    if (state.view === 'map' || state.view === 'graph') fetchFileMap(false);
     render();
   } else if (data.type === 'session') {
     state.detail[data.session.id] = data.session;
@@ -2299,4 +2546,5 @@ async function fetchDetail(id) {
   } catch { /* collector restarting */ }
 }
 
-setInterval(renderList, 30000); // refresh "ago" stamps
+// refresh "ago" stamps + live dots while the sessions page is visible
+setInterval(() => { if (state.view === 'sessions') renderSessionsPage(); }, 30000);

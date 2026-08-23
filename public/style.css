@@ -7,7 +7,9 @@
   --ink: #E4EBF1;
   --muted: #93A4B0;
   --line: #2E3A46;
+  --line-bright: #40505F;
   --accent: #EFAF45;
+  --accent-dim: rgba(239, 175, 69, 0.1);
 
   --c-base: #5E9AD8;
   --c-conversation: #8AB4DC;
@@ -53,78 +55,184 @@ body {
   * { scrollbar-width: thin; scrollbar-color: var(--line) var(--paper); }
 }
 
+/* ---- buttons: one recipe app-wide ---- */
+/* Secondary (default): bright text on a raised panel. Primary (.primary):
+   always lit in accent, fills solid on hover — the page's "do this" action. */
+.ctx-btn, .back-btn, .sugg-more, .scrub-live,
+.map-projects button, .graph-toolbar button {
+  font-family: var(--mono); font-size: 0.68rem; font-weight: 600;
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line-bright); border-radius: 7px;
+  padding: 0.3rem 0.75rem; cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s, transform 0.08s;
+}
+.ctx-btn:hover:not(:disabled), .back-btn:hover, .sugg-more:hover,
+.map-projects button:hover, .graph-toolbar button:hover:not(:disabled) {
+  color: var(--accent); border-color: var(--accent); background: var(--accent-dim);
+}
+.ctx-btn:active:not(:disabled), .back-btn:active, .sugg-more:active,
+.scrub-live:active, .map-projects button:active, .graph-toolbar button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.ctx-btn:focus-visible, .back-btn:focus-visible, .sugg-more:focus-visible,
+.scrub-live:focus-visible, .map-projects button:focus-visible, .graph-toolbar button:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+.ctx-btn:disabled, .graph-toolbar button:disabled { opacity: 0.55; cursor: wait; }
+button.primary {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+button.primary:hover:not(:disabled) {
+  color: var(--paper); background: var(--accent); border-color: var(--accent);
+}
+
+/* ---- motion ---- */
+/* Pages animate in when their display flips from none (view switches);
+   SSE re-renders leave `hidden` untouched, so nothing replays mid-view. */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(-3px); }
+}
+@keyframes dot-pulse {
+  0%, 100% { box-shadow: 0 0 4px #58C88A; }
+  50% { box-shadow: 0 0 11px #58C88A; }
+}
+/* `scale` (not transform) — bubbles position via an inline transform */
+@keyframes pop {
+  from { scale: 0.3; opacity: 0; }
+}
+@keyframes grow-y {
+  from { transform: scaleY(0); }
+}
+
+/* Staggered entrances, gated on the .enter window a view gets when opened
+   (see markEntry in app.js). `backwards` keeps delayed children invisible
+   until their turn. */
+.enter .stag > * { animation: fade-up 0.26s ease backwards; }
+.enter .stag > :nth-child(2) { animation-delay: 30ms; }
+.enter .stag > :nth-child(3) { animation-delay: 60ms; }
+.enter .stag > :nth-child(4) { animation-delay: 90ms; }
+.enter .stag > :nth-child(5) { animation-delay: 120ms; }
+.enter .stag > :nth-child(6) { animation-delay: 150ms; }
+.enter .stag > :nth-child(7) { animation-delay: 180ms; }
+.enter .stag > :nth-child(8) { animation-delay: 210ms; }
+.enter .stag > :nth-child(n+9) { animation-delay: 240ms; }
+.enter .legend > span { animation: fade-up 0.3s ease backwards 0.15s; }
+.enter .tm-cell { animation: pop 0.3s ease backwards; }
+.enter .tm-cell:nth-child(2n) { animation-delay: 60ms; }
+.enter .tm-cell:nth-child(3n) { animation-delay: 110ms; }
+.enter .tm-cell:nth-child(5n) { animation-delay: 160ms; }
+.enter .trend-chart .tc-col { animation: grow-y 0.4s ease backwards; }
+.enter .trend-chart .tc-col:nth-child(2n) { animation-delay: 45ms; }
+.enter .trend-chart .tc-col:nth-child(3n) { animation-delay: 85ms; }
+
 #app { display: block; height: 100vh; }
 
-/* ---- sidebar: collapsed rail, slides open on hover / keyboard focus ---- */
+/* ---- sidebar: icon rail, expands on hover / keyboard focus ---- */
 #sidebar {
-  position: fixed; top: 0; left: 0; bottom: 0; width: 264px; z-index: 10;
+  position: fixed; top: 0; left: 0; bottom: 0; width: 56px; z-index: 10;
   background: var(--panel);
   border-right: 1px solid var(--line);
   display: flex; flex-direction: column;
-  overflow: hidden; /* brand + tabs stay put; only the session list scrolls */
-  /* right padding exceeds the 18px collapsed sliver so the session-list
-     scrollbar stays hidden while the drawer is closed */
-  padding: 0.9rem 1.5rem 0.9rem 0.7rem;
-  transform: translateX(calc(-100% + 18px));
-  transition: transform 0.16s ease 0.3s, box-shadow 0.16s ease 0.3s;
+  overflow: hidden; /* labels slide in from the clipped area on expand */
+  padding: 0.9rem 0;
+  transition: width 0.16s ease 0.25s, box-shadow 0.16s ease 0.25s;
 }
-#session-list { flex: 1; min-height: 0; overflow-y: auto; }
 #sidebar:hover, #sidebar:focus-within {
-  transform: none;
+  width: 208px;
   transition-delay: 0s;
   box-shadow: 10px 0 26px rgba(0, 0, 0, 0.45);
 }
-/* collapsed-rail hint; the open drawer slides over it */
-#main::before {
-  content: '»';
-  position: fixed; left: 4px; top: 50%; z-index: 5;
-  transform: translateY(-50%);
-  font-family: var(--mono); font-size: 0.75rem; color: var(--muted);
-  pointer-events: none;
-}
 .brand-row {
-  display: flex; align-items: baseline; justify-content: space-between;
-  padding: 0.2rem 0.5rem 0.5rem;
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.1rem 0 1.1rem 1.05rem;
+  white-space: nowrap;
 }
+.brand-mark { flex: 0 0 auto; display: block; }
 .brand {
   font-family: var(--mono);
   font-weight: 600;
   font-size: 0.95rem;
   letter-spacing: 0.06em;
   color: var(--accent);
+  opacity: 0; transform: translateX(-6px);
+  transition: opacity 0.12s ease, transform 0.16s ease;
 }
-.brand-btns {
-  display: flex; gap: 0.3rem;
-  padding: 0 0.5rem 0.9rem;
+#sidebar:hover .brand, #sidebar:focus-within .brand { opacity: 1; transform: none; }
+#nav { display: flex; flex-direction: column; gap: 0.25rem; padding: 0 0.5rem; }
+.nav-item {
+  display: flex; align-items: center; gap: 0.65rem;
+  background: none; border: none; border-radius: 8px;
+  font-family: var(--mono); font-size: 0.74rem;
+  color: var(--muted); cursor: pointer;
+  padding: 0.5rem 0 0.5rem 0.7rem;
+  white-space: nowrap; text-align: left;
 }
-.brand-btns button {
-  flex: 1;
-  font-family: var(--mono); font-size: 0.66rem;
-  background: var(--panel-2); color: var(--muted);
-  border: 1px solid var(--line); border-radius: 6px;
-  padding: 0.24rem 0.55rem; cursor: pointer;
+.nav-item svg { flex: 0 0 auto; transition: transform 0.12s ease; }
+.nav-item:hover svg { transform: translateY(-1px) scale(1.06); }
+.nav-item span {
+  opacity: 0; transform: translateX(-6px);
+  transition: opacity 0.12s ease, transform 0.16s ease;
 }
-.brand-btns button:hover { color: var(--ink); }
-.brand-btns button.active { color: var(--accent); border-color: var(--accent); }
-.brand-btns button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.session-item {
-  padding: 0.55rem 0.6rem;
-  border-radius: 8px;
-  cursor: pointer;
-  margin-bottom: 0.25rem;
-  border: 1px solid transparent;
+#sidebar:hover .nav-item span, #sidebar:focus-within .nav-item span { opacity: 1; transform: none; }
+.nav-item:hover { color: var(--ink); background: var(--panel-2); }
+.nav-item.active {
+  color: var(--accent); background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
-.session-item:hover { background: var(--panel-2); }
-.session-item.active { background: var(--panel-2); border-color: var(--line); }
-.session-item .st { font-weight: 600; font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.session-item .sm {
-  font-family: var(--mono); font-size: 0.68rem; color: var(--muted);
-  display: flex; justify-content: space-between; gap: 0.5rem; margin-top: 0.15rem;
-}
+.nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ---- main ---- */
-#main { overflow-y: auto; height: 100vh; margin-left: 18px; }
+#main { overflow-y: auto; height: 100vh; margin-left: 56px; }
+#detail { animation: fade-up 0.22s ease both; }
 .empty { color: var(--muted); font-family: var(--mono); padding: 3rem; }
+
+/* ---- sessions page ---- */
+#sessions-page { max-width: none; } /* card grid fills the screen; auto-fill adds columns */
+#sessions-page .empty { padding: 1rem 0; }
+.sessions-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 0.8rem;
+}
+.session-card {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 0.8rem 0.95rem; cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease,
+    transform 0.14s ease, box-shadow 0.14s ease;
+}
+.session-card:hover {
+  background: var(--panel-2); border-color: var(--line-bright);
+  transform: translateY(-2px);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.3);
+}
+.session-card.active { border-color: var(--accent); }
+.session-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sc-top { display: flex; align-items: center; gap: 0.5rem; }
+.sc-top .dot { flex: 0 0 auto; }
+.sc-title {
+  flex: 1; min-width: 0; font-weight: 600; font-size: 0.85rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sc-ago { font-size: 0.66rem; color: var(--muted); white-space: nowrap; }
+.sc-cwd {
+  font-size: 0.64rem; color: var(--muted); margin-top: 0.1rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sc-barrow { display: flex; align-items: center; gap: 0.6rem; margin-top: 0.55rem; }
+.sc-bar { flex: 1; height: 8px; background: var(--c-free); border-radius: 4px; overflow: hidden; }
+.sc-bar div { height: 100%; border-radius: 4px; background: var(--c-base); }
+.sc-bar div.warn { background: var(--c-output); }
+.sc-bar div.crit { background: var(--c-recache); }
+.sc-ctx { font-size: 0.64rem; color: var(--muted); white-space: nowrap; }
+.sc-meta {
+  font-size: 0.66rem; color: var(--muted); margin-top: 0.45rem;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 #head {
   position: sticky; top: 0; z-index: 2;
@@ -133,9 +241,10 @@ body {
   border-bottom: 1px solid var(--line);
 }
 .head-row { display: flex; align-items: center; gap: 0.6rem; }
+.back-btn { font-size: 0.8rem; line-height: 1.2; padding: 0.06rem 0.5rem; }
 #head h1 { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; margin: 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.dot.on { background: #58C88A; box-shadow: 0 0 6px #58C88A; }
+.dot.on { background: #58C88A; animation: dot-pulse 2.4s ease-in-out infinite; }
 .head-meta {
   display: flex; gap: 1.2rem; flex-wrap: wrap;
   font-size: 0.7rem; color: var(--muted); margin: 0.25rem 0 0.9rem;
@@ -145,14 +254,8 @@ body {
   font-size: 0.68rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ctx-btn {
-  font-family: var(--mono); font-size: 0.62rem;
-  background: var(--panel-2); color: var(--muted);
-  border: 1px solid var(--line); border-radius: 6px;
-  padding: 0.12rem 0.5rem; cursor: pointer;
-}
-.ctx-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
-.ctx-btn:disabled { opacity: 0.55; cursor: wait; }
+/* header + plan bar are dense — keep their buttons compact */
+.ctx-btn { font-size: 0.64rem; padding: 0.16rem 0.6rem; }
 .ctx-status { color: var(--muted); overflow-wrap: anywhere; }
 .plan-bar {
   display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
@@ -165,7 +268,9 @@ body {
   margin-bottom: 0.35rem;
 }
 .gauge { display: flex; height: 16px; border-radius: 5px; overflow: hidden; background: var(--c-free); }
-.gauge div { height: 100%; min-width: 0; }
+.gauge div { height: 100%; min-width: 0; transition: width 0.45s ease; }
+/* time-scrubbing tracks the pointer — a width glide would lag behind it */
+.gauge.scrubbing div { transition: none; }
 .legend {
   display: flex; flex-wrap: wrap; gap: 0.3rem 0.95rem;
   font-family: var(--mono); font-size: 0.64rem; color: var(--muted);
@@ -212,12 +317,10 @@ body {
 
 .scrub-live {
   position: absolute; top: 4px; right: 4px; z-index: 2;
-  font-family: var(--mono); font-size: 0.6rem;
-  background: var(--paper); color: var(--accent);
-  border: 1px solid var(--accent); border-radius: 5px;
-  padding: 0.1rem 0.45rem; cursor: pointer;
+  font-size: 0.6rem; padding: 0.1rem 0.45rem; /* overlay chip stays small */
 }
-.scrub-live:hover { background: var(--panel-2); }
+/* floats over the chart — translucent tint would muddy it */
+.scrub-live.primary { background: var(--paper); }
 
 #cols { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr); gap: 1.5rem; padding: 1.2rem 1.4rem 3rem; }
 @media (max-width: 900px) { #cols { grid-template-columns: 1fr; } }
@@ -229,17 +332,41 @@ h2 {
 }
 
 /* ---- collapsible right-column sections ---- */
-.sect { margin-bottom: 1.6rem; }
-.sect > h2 { cursor: pointer; user-select: none; }
-.sect > h2::before { content: '▾ '; font-size: 0.62rem; }
+/* Open/close animates via the grid-rows trick: the content track eases
+   between 1fr and 0fr, so no height measuring is needed. */
+.sect {
+  margin-bottom: 1.6rem;
+  /* minmax(0,1fr) column: long content must wrap/clip, never widen the track */
+  display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr);
+  transition: grid-template-rows 0.24s ease;
+}
+.sect.closed { grid-template-rows: auto 0fr; }
+.sect[hidden] { display: none; } /* author grid would beat the UA hidden rule */
+.sect > h2 { cursor: pointer; user-select: none; transition: margin-bottom 0.24s ease, color 0.12s ease; }
+.sect > h2::before {
+  content: '▾'; display: inline-block; margin-right: 0.35em;
+  font-size: 0.62rem; transition: transform 0.16s ease;
+}
 .sect > h2:hover { color: var(--accent); }
 .sect > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.sect.closed > h2::before { content: '▸ '; }
+.sect.closed > h2::before { transform: rotate(-90deg); }
 .sect.closed > h2 { margin-bottom: 0; }
-.sect.closed > :not(h2) { display: none; }
+.sect > :not(h2) {
+  overflow: hidden; min-height: 0;
+  /* stays visible while the track collapses, hidden once it's closed */
+  visibility: visible; transition: visibility 0.24s;
+  animation: reveal 0.16s ease;
+}
+.sect.closed > :not(h2) { visibility: hidden; }
 
 /* ---- timeline ---- */
-.turn { margin-bottom: 1.3rem; }
+.turn {
+  margin-bottom: 1.3rem;
+  /* minmax(0,1fr) column: a collapsed head's nowrap prompt would otherwise
+     size the track to the full text and overflow into the right column */
+  display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr);
+  transition: grid-template-rows 0.22s ease, margin-bottom 0.22s ease;
+}
 .turn-head {
   display: flex; gap: 0.6rem; align-items: baseline;
   font-size: 0.82rem; font-weight: 600; padding: 0.3rem 0;
@@ -252,8 +379,12 @@ h2 {
 .turn-head .tp { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 /* collapsed turns keep a compact one-line header; expanding reveals the full prompt */
 .turn.collapsed .turn-head .tp { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.turn.collapsed .turn-actions { display: none; }
-.turn.collapsed { margin-bottom: 0.5rem; }
+.turn-actions {
+  overflow: hidden; min-height: 0;
+  visibility: visible; transition: visibility 0.22s;
+}
+.turn.collapsed .turn-actions { visibility: hidden; }
+.turn.collapsed { grid-template-rows: auto 0fr; margin-bottom: 0.5rem; }
 .turn-head .tt { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); font-weight: 400; white-space: nowrap; }
 .arow {
   display: grid; grid-template-columns: minmax(0, 1fr) auto 7rem 3.6rem;
@@ -307,6 +438,19 @@ h2 {
 .base-row.exp { cursor: pointer; user-select: none; }
 .base-row.exp:hover span { color: var(--accent); }
 .base-row.exp:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* expandable row detail: same grid-rows collapse as the sections; the
+   fold-clip layer keeps the detail's margins/borders from leaking a sliver
+   into the closed state */
+.base-fold {
+  display: grid; grid-template-rows: 0fr; grid-template-columns: minmax(0, 1fr);
+  transition: grid-template-rows 0.2s ease;
+}
+.base-fold.open { grid-template-rows: 1fr; }
+.base-fold .fold-clip {
+  overflow: hidden; min-height: 0;
+  visibility: hidden; transition: visibility 0.2s;
+}
+.base-fold.open .fold-clip { visibility: visible; }
 .base-detail {
   font-size: 0.66rem; color: var(--muted);
   margin: 0.15rem 0 0.25rem 0.2rem;
@@ -336,14 +480,7 @@ h2 {
 .sugg-item.clickable:hover { background: var(--panel); }
 .sugg-item.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .sugg-item.active { background: var(--panel); border-left-width: 4px; }
-.sugg-more {
-  font-family: var(--mono); font-size: 0.66rem;
-  background: none; color: var(--muted);
-  border: 1px solid var(--line); border-radius: 6px;
-  padding: 0.22rem 0.6rem; cursor: pointer; margin-top: 0.1rem;
-}
-.sugg-more:hover { color: var(--accent); border-color: var(--accent); }
-.sugg-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sugg-more { margin-top: 0.1rem; }
 
 /* rows matching the clicked Optimize entry */
 .arow.hl, .agent-action.hl {
@@ -425,7 +562,7 @@ h2 {
 }
 
 /* ---- cross-session reports ---- */
-.report { padding: 1.3rem 1.4rem 3rem; max-width: 860px; }
+.report { padding: 1.3rem 1.4rem 3rem; max-width: 860px; margin: 0 auto; animation: fade-up 0.22s ease both; }
 .report-head { margin-bottom: 1rem; }
 .report-head h1 { font-family: var(--mono); font-size: 1.05rem; font-weight: 600; margin: 0 0 0.2rem; }
 .report-sub { font-size: 0.7rem; color: var(--muted); }
@@ -441,6 +578,7 @@ h2 {
   flex: 1 1 0; min-width: 3px; height: 100%;
   display: flex; flex-direction: column; justify-content: flex-end;
   border-radius: 2px 2px 0 0; overflow: hidden;
+  transform-origin: bottom; /* grow-y entrance rises from the baseline */
 }
 .tc-col:hover { background: var(--panel); }
 .tc-seg { width: 100%; min-height: 1px; }
@@ -472,17 +610,15 @@ h2 {
 .trend-row .tm { color: var(--muted); white-space: nowrap; }
 
 /* ---- codebase map ---- */
-#map-report { max-width: 1280px; }
+#map-report { max-width: none; }
 .map-projects { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.7rem; }
 .map-projects button {
-  font-family: var(--mono); font-size: 0.66rem;
-  background: var(--panel-2); color: var(--muted);
-  border: 1px solid var(--line); border-radius: 6px;
-  padding: 0.22rem 0.6rem; cursor: pointer;
   max-width: 18rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.map-projects button:hover { color: var(--ink); }
-.map-projects button.active { color: var(--accent); border-color: var(--accent); }
+.map-projects button.active {
+  color: var(--paper); background: var(--accent); border-color: var(--accent);
+}
+.map-projects button.active:hover { color: var(--paper); background: var(--accent); }
 .map-body { display: flex; gap: 0.9rem; align-items: stretch; }
 .map-canvas { position: relative; flex: 1; min-width: 0; background: var(--panel); border-radius: 8px; overflow: hidden; }
 .map-detail {
@@ -532,34 +668,40 @@ h2 {
   margin-top: 0.6rem;
 }
 
-/* codebase map — knowledge graph mode */
-#map-mode { margin-top: -0.35rem; }
-#map-report.graph-full { max-width: none; }
-/* graph mode: detail strip above, canvas full width */
-.map-body.graph-layout { flex-direction: column-reverse; }
+/* ---- knowledge graph page ---- */
+#graph-report { max-width: none; }
+/* detail strip above, canvas full width */
+#graph-report .map-body { flex-direction: column-reverse; }
 /* in column direction flex: 1 would zero the canvas height (flex-basis
    beats the height property on the main axis) — let the JS height rule */
-.map-body.graph-layout .map-canvas { flex: none; width: 100%; }
-.map-body.graph-layout .map-detail {
+#graph-report .map-canvas { flex: none; width: 100%; }
+#graph-report .map-detail {
   flex: none; width: auto;
   min-height: 70px; max-height: 220px; overflow-y: auto;
 }
-.map-body.graph-layout .map-detail > .md-row {
+#graph-report .map-detail > .md-row {
   display: inline-flex; gap: 0.55rem;
   border-bottom: none; margin-right: 1.6rem; padding: 0.1rem 0;
 }
-.map-body.graph-layout .map-detail .md-list {
+#graph-report .map-detail .md-list {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
   gap: 0 1.4rem; margin-top: 0.25rem;
 }
-.map-body.graph-layout .map-detail .md-path { margin: 0.4rem 0 0.1rem; }
-.graph-controls { display: inline-flex; gap: 0.45rem; align-items: center; margin-left: 0.5rem; }
-.graph-controls select {
+#graph-report .map-detail .md-path { margin: 0.4rem 0 0.1rem; }
+.graph-toolbar { display: flex; gap: 0.45rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.7rem; }
+.graph-toolbar select {
   font-family: var(--mono); font-size: 0.66rem;
   background: var(--panel-2); color: var(--muted);
   border: 1px solid var(--line); border-radius: 6px;
   padding: 0.18rem 0.35rem;
 }
+.graph-toolbar input[type="text"] {
+  font-family: var(--mono); font-size: 0.66rem;
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 0.18rem 0.45rem; width: 13rem;
+}
+.graph-toolbar input[type="text"]:focus { outline: none; border-color: var(--accent); }
 #graph-status { font-family: var(--mono); font-size: 0.64rem; color: var(--muted); }
 #graph-status.stale { color: #e39a3b; }
 .map-legend .swatch.sw-imports { background: var(--muted); height: 2px; width: 14px; border-radius: 0; }
@@ -581,3 +723,13 @@ h2 {
 .totals { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
 .totals div { display: flex; justify-content: space-between; padding: 0.22rem 0; border-bottom: 1px dashed var(--line); }
 .totals b { color: var(--ink); font-weight: 600; }
+
+/* ---- reduced motion: keep every state change, drop the easing ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important; /* delayed+backwards would hide content */
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
